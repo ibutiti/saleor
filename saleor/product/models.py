@@ -160,7 +160,7 @@ class Product(models.Model, ItemRange):
             ('view_product',
              pgettext_lazy('Permission description', 'Can view products')),
             ('edit_product',
-             pgettext_lazy('Permission description','Can edit products')))
+             pgettext_lazy('Permission description', 'Can edit products')))
 
     def __iter__(self):
         if not hasattr(self, '__variants'):
