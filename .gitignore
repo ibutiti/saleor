@@ -1,14 +1,18 @@
 *.py[cod]
 .*
 !.babelrc
+!.circleci
 !.codeclimate.yml
 !.coveragerc
 !.dockerignore
 !.eslintrc.json
 !.flowconfig
+!.gqlconfig
 !.github
 !.gitignore
 !.nvmrc
+!.npmrc
+!.plop
 !.pylintrc
 !.travis*
 !.tx
@@ -19,6 +23,7 @@
 local_settings.py
 __pycache__/
 build/
+coverage/
 dist/
 *\.egg*
 # data
@@ -28,3 +33,8 @@ dist/
 /static/
 /saleor/static/assets/
 webpack-bundle.json
+/templates/templated_email/compiled/*
+!/templates/templated_email/compiled/.gitkeep
+
+# Exported results file
+django-queries-results.html

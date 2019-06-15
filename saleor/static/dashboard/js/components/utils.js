@@ -1,21 +1,19 @@
-import 'select2';
+import detectPassiveEvents from 'detect-passive-events';
+import { parse, stringify } from 'qs';
 
-var supportsPassive = false;
-try {
-  let opts = Object.defineProperty({}, 'passive', {
-    get: function () {
-      supportsPassive = true;
-    }
-  });
-  window.addEventListener('test', null, opts);
-} catch (e) {
+function onScroll(func) {
+  window.addEventListener('scroll', func, detectPassiveEvents.hasSupport ? {
+    passive: true
+  } : false);
 }
 
-export function onScroll(func) {
-  window.addEventListener('scroll', func, supportsPassive ? {passive: true} : false);
+function createQueryString(currentQs, newData) {
+  const currentData = parse(currentQs.substr(1));
+  const data = stringify(Object.assign({}, currentData, newData));
+  return `?${data}`;
 }
 
-export function initSelects() {
-  $('select:not(.browser-default):not([multiple])').material_select();
-  $('select[multiple]:not(.browser-default)').select2({width: '100%'});
-}
+export {
+  onScroll,
+  createQueryString
+};

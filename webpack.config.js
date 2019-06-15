@@ -1,88 +1,89 @@
-var BundleTracker = require('webpack-bundle-tracker');
-var ExtractTextPlugin = require('extract-text-webpack-plugin');
-var FaviconsWebpackPlugin = require('favicons-webpack-plugin');
-var path = require('path');
-var webpack = require('webpack');
-var autoprefixer = require('autoprefixer');
+const autoprefixer = require('autoprefixer');
+const CheckerPlugin = require('fork-ts-checker-webpack-plugin');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const path = require('path');
+const url = require('url');
+const webpack = require('webpack');
+const BundleTracker = require('webpack-bundle-tracker');
+const TsconfigPathsPlugin = require('tsconfig-paths-webpack-plugin');
 
-var resolve = path.resolve.bind(path, __dirname);
+const resolve = path.resolve.bind(path, __dirname);
 
-var extractTextPlugin;
-var fileLoaderPath;
-var output;
-
-if (process.env.NODE_ENV === 'production') {
-  output = {
-    path: resolve('saleor/static/assets/'),
-    filename: '[name].[chunkhash].js',
-    publicPath: process.env.STATIC_URL || '/static/assets/'
-  };
-  fileLoaderPath = 'file-loader?name=[name].[hash].[ext]';
-  extractTextPlugin = new ExtractTextPlugin('[name].[contenthash].css');
-} else {
-  output = {
-    path: resolve('saleor/static/assets/'),
-    filename: '[name].js',
-    publicPath: '/static/assets/'
-  };
-  fileLoaderPath = 'file-loader?name=[name].[ext]';
-  extractTextPlugin = new ExtractTextPlugin('[name].css');
-}
-
-var bundleTrackerPlugin = new BundleTracker({
+const bundleTrackerPlugin = new BundleTracker({
   filename: 'webpack-bundle.json'
 });
 
-var commonsChunkPlugin = new webpack.optimize.CommonsChunkPlugin({
-  names: 'vendor'
-});
-
-var occurenceOrderPlugin = new webpack.optimize.OccurrenceOrderPlugin();
-
-var environmentPlugin = new webpack.DefinePlugin({
-  'process.env': {
-    NODE_ENV: JSON.stringify(process.env.NODE_ENV || 'development')
-  }
-});
-
-var providePlugin = new webpack.ProvidePlugin({
+const providePlugin = new webpack.ProvidePlugin({
   $: 'jquery',
   jQuery: 'jquery',
   'window.jQuery': 'jquery',
-  'Popper': 'popper.js'
+  Popper: 'popper.js',
+  'query-string': 'query-string'
 });
 
-var faviconsWebpackPlugin = new FaviconsWebpackPlugin({
-  logo: './saleor/static/images/favicon.svg',
-  prefix: 'favicons/',
-  title: "Saleor"
+const pathsPlugin = new TsconfigPathsPlugin({
+  configFile: './tsconfig.json'
 });
 
-var config = {
-  entry: {
-    dashboard: './saleor/static/dashboard/js/dashboard.js',
-    document: './saleor/static/dashboard/js/document.js',
-    storefront: './saleor/static/js/storefront.js',
-    vendor: [
-      'babel-es6-polyfill',
-      'bootstrap',
-      'jquery',
-      'jquery.cookie',
-      'react'
-    ]
-  },
-  output: output,
-  module: {
-    rules: [
-      {
-        test: /\.js$/,
-        exclude: /node_modules/,
-        loader: 'babel-loader'
-      },
-      {
-        test: /\.scss$/,
-        loader: ExtractTextPlugin.extract({
+const checkerPlugin = new CheckerPlugin({
+  reportFiles: ['saleor/**/*.{ts,tsx}'],
+  tslint: true
+});
+
+module.exports = (env, argv) => {
+  const devMode = argv.mode !== 'production';
+
+  let extractCssPlugin;
+  let fileLoaderPath;
+  let output;
+
+  if (!devMode) {
+    const baseStaticPath = process.env.STATIC_URL || '/static/';
+    const publicPath = url.resolve(baseStaticPath, 'assets/');
+    output = {
+      path: resolve('saleor/static/assets/'),
+      filename: '[name].[chunkhash].js',
+      chunkFilename: '[name].[chunkhash].js',
+      publicPath: publicPath
+    };
+    fileLoaderPath = 'file-loader?name=[name].[hash].[ext]';
+    extractCssPlugin = new MiniCssExtractPlugin({
+      filename: '[name].[chunkhash].css',
+      chunkFilename: '[id].[chunkhash].css'
+    });
+  } else {
+    output = {
+      path: resolve('saleor/static/assets/'),
+      filename: '[name].js',
+      chunkFilename: '[name].js',
+      publicPath: '/static/assets/'
+    };
+    fileLoaderPath = 'file-loader?name=[name].[ext]';
+    extractCssPlugin = new MiniCssExtractPlugin({
+      filename: '[name].css',
+      chunkFilename: '[name].css'
+    });
+  }
+
+  return {
+    entry: {
+      dashboard: './saleor/static/dashboard/js/dashboard.js',
+      'dashboard-next': './saleor/static/dashboard-next/index.tsx',
+      document: './saleor/static/dashboard/js/document.js',
+      storefront: './saleor/static/js/storefront.js'
+    },
+    output: output,
+    module: {
+      rules: [
+        {
+          test: /\.js$/,
+          exclude: /node_modules/,
+          loader: 'babel-loader'
+        },
+        {
+          test: /\.scss$/,
           use: [
+            MiniCssExtractPlugin.loader,
             {
               loader: 'css-loader',
               options: {
@@ -105,36 +106,48 @@ var config = {
               }
             }
           ]
-        })
+        },
+        {
+          test: /\.tsx?$/,
+          exclude: /node_modules/,
+          loader: 'ts-loader',
+          options: {
+            experimentalWatchApi: true,
+            transpileOnly: true
+          }
+        },
+        {
+          test: /\.(eot|otf|png|svg|jpg|ttf|woff|woff2)(\?v=[0-9.]+)?$/,
+          loader: fileLoaderPath,
+          include: [
+            resolve('node_modules'),
+            resolve('saleor/static/fonts'),
+            resolve('saleor/static/images'),
+            resolve('saleor/static/dashboard/images')
+          ]
+        }
+      ]
+    },
+    optimization: {
+      removeAvailableModules: false,
+      removeEmptyChunks: false,
+      splitChunks: false
+    },
+    plugins: [
+      bundleTrackerPlugin,
+      extractCssPlugin,
+      providePlugin,
+      checkerPlugin
+    ],
+    resolve: {
+      alias: {
+        jquery: resolve('node_modules/jquery/dist/jquery.js')
       },
-      {
-        test: /\.(eot|otf|png|svg|jpg|ttf|woff|woff2)(\?v=[0-9.]+)?$/,
-        loader: fileLoaderPath,
-        include: [
-          resolve('node_modules'),
-          resolve('saleor/static/fonts'),
-          resolve('saleor/static/images'),
-          resolve('saleor/static/dashboard/images')
-        ]
-      }
-    ]
-  },
-  plugins: [
-    bundleTrackerPlugin,
-    commonsChunkPlugin,
-    environmentPlugin,
-    extractTextPlugin,
-    occurenceOrderPlugin,
-    providePlugin,
-    faviconsWebpackPlugin
-  ],
-  resolve: {
-    alias: {
-      'jquery': resolve('node_modules/jquery/dist/jquery.js'),
-      'react': resolve('node_modules/react/dist/react.min.js'),
-      'react-dom': resolve('node_modules/react-dom/dist/react-dom.min.js')
-    }
-  }
+      extensions: ['.ts', '.tsx', '.js', '.jsx'],
+      plugins: [
+        pathsPlugin
+      ]
+    },
+    devtool: 'sourceMap'
+  };
 };
-
-module.exports = config;

@@ -1,9 +1,19 @@
 .modal-content {
-  .row {
+  & > .row {
     margin: {
       left: -.75rem;
       right: -.75rem;
     }
+    &:last-of-type {
+      margin-bottom: 0;
+    }
+  }
+  .address {
+    margin: 1rem 0;
+  }
+
+  blockquote {
+    margin: 8px 0;
   }
 }
 

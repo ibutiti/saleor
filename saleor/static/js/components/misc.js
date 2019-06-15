@@ -1,3 +1,4 @@
+import 'lazysizes';
 import SVGInjector from 'svg-injector-2';
 
 export const getAjaxError = (response) => {
@@ -25,4 +26,21 @@ export default $(document).ready((e) => {
 
   let hash = window.location.hash;
   $('.nav-tabs a[href="' + hash + '"]').tab('show');
+
+  // Preload all images
+  window.lazySizesConfig.preloadAfterLoad = true;
+
+  // Function for update product image height
+  function updateProductImageHeight() {
+    let productImageWidth = $('.product-image').width();
+    $('.product-image').css({'height': productImageWidth + 'px'});
+  }
+
+  // Update product-image height when window is initialized
+  updateProductImageHeight();
+
+  // Update product-image height
+  $(window).bind('resized', function() {
+    updateProductImageHeight();
+  });
 });

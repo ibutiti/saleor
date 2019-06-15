@@ -5,13 +5,14 @@
 {% endblock %}
 
 {% block plain %}
+{% include 'templated_email/shared/_header.email' %}
 {% blocktrans context "Payment confirmation email text" %}
-Hi!
-
 Thank you for your payment. To see your payment details please visit:
-{{ url }}
-
-Sincerely,
-{{ site_name }}
+{{ order_details_url }}
 {% endblocktrans %}
+{% include 'templated_email/shared/_footer.email' %}
+{% endblock %}
+
+{% block html %}
+{% include 'templated_email/compiled/confirm_payment.html' %}
 {% endblock %}

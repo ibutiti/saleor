@@ -1,10 +1,19 @@
-from django.contrib.sites.models import Site
-from django.urls import reverse
+from django.urls import reverse, translate_url
+
+from saleor.core.utils import build_absolute_uri
 
 
-def test_sitemap_uses_site_settings_domain(client, product_in_stock):
-    url = 'http://%(domain)s%(product_url)s' % {
-        'domain': Site.objects.get_current().domain,
-        'product_url': product_in_stock.get_absolute_url()}
-    response = client.get(reverse('django.contrib.sitemaps.views.sitemap'))
-    assert response.context['urlset'][0]['location'] == url
+def test_sitemap(client, product, settings):
+    product_url = build_absolute_uri(product.get_absolute_url())
+    category_url = build_absolute_uri(product.category.get_absolute_url())
+    expected_urls = [product_url, category_url]
+
+    language_codes = [lang_code for lang_code, lang_name in settings.LANGUAGES]
+    expected_urls_i18n = [
+        translate_url(url, language_code)
+        for url in expected_urls
+        for language_code in language_codes
+    ]
+    response = client.get(reverse("django.contrib.sitemaps.views.sitemap"))
+    sitemap_links = [url["location"] for url in response.context["urlset"]]
+    assert sorted(sitemap_links) == sorted(expected_urls_i18n)

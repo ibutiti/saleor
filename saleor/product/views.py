@@ -1,26 +1,44 @@
-from __future__ import unicode_literals
-
 import datetime
 import json
+import mimetypes
+import os
+from typing import Union
 
-from django.http import HttpResponsePermanentRedirect, JsonResponse
+from django.http import (
+    FileResponse,
+    HttpResponseNotFound,
+    HttpResponsePermanentRedirect,
+    JsonResponse,
+)
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
 from django.urls import reverse
 
-from ..cart.utils import set_cart_cookie
-from ..core.utils import get_paginator_items, serialize_decimal
-from ..settings import PAGINATE_BY
-from .filters import ProductFilter, get_now_sorted_by, get_sort_by_choices
-from .models import Category
+from ..checkout.utils import set_checkout_cookie
+from ..core.utils import serialize_decimal
+from ..seo.schema.product import product_json_ld
+from .filters import ProductCategoryFilter, ProductCollectionFilter
+from .models import Category, DigitalContentUrl
 from .utils import (
-    get_availability, get_product_attributes_data, get_product_images,
-    get_variant_picker_data, handle_cart_form, product_json_ld,
-    products_for_cart, products_with_availability, products_with_details)
+    collections_visible_to_user,
+    get_product_images,
+    get_product_list_context,
+    handle_checkout_form,
+    products_for_checkout,
+    products_for_products_list,
+    products_with_details,
+)
+from .utils.attributes import get_product_attributes_data
+from .utils.availability import get_product_availability
+from .utils.digital_products import (
+    digital_content_url_is_valid,
+    increment_download_count,
+)
+from .utils.variants_picker import get_variant_picker_data
 
 
 def product_details(request, slug, product_id, form=None):
-    """Product details page
+    """Product details page.
 
     The following variables are available to the template:
 
@@ -32,7 +50,7 @@ def product_details(request, slug, product_id, form=None):
         admin is previewing a product before publishing).
 
     form:
-        The add-to-cart form.
+        The add-to-checkout form.
 
     price_range:
         The PriceRange for the product including all discounts.
@@ -54,85 +72,132 @@ def product_details(request, slug, product_id, form=None):
     if product.get_slug() != slug:
         return HttpResponsePermanentRedirect(product.get_absolute_url())
     today = datetime.date.today()
-    is_visible = (
-        product.available_on is None or product.available_on <= today)
+    is_visible = product.publication_date is None or product.publication_date <= today
     if form is None:
-        form = handle_cart_form(request, product, create_cart=False)[0]
-    availability = get_availability(product, discounts=request.discounts,
-                                    local_currency=request.currency)
-    template_name = 'product/details_%s.html' % (
-        type(product).__name__.lower(),)
-    templates = [template_name, 'product/details.html']
+        form = handle_checkout_form(request, product, create_checkout=False)[0]
+    availability = get_product_availability(
+        product,
+        discounts=request.discounts,
+        taxes=request.taxes,
+        local_currency=request.currency,
+    )
     product_images = get_product_images(product)
     variant_picker_data = get_variant_picker_data(
-        product, request.discounts, request.currency)
+        product, request.discounts, request.taxes, request.currency
+    )
     product_attributes = get_product_attributes_data(product)
+    # show_variant_picker determines if variant picker is used or select input
     show_variant_picker = all([v.attributes for v in product.variants.all()])
-    json_ld_data = product_json_ld(product, availability, product_attributes)
-    return TemplateResponse(
-        request, templates,
-        {'is_visible': is_visible,
-         'form': form,
-         'availability': availability,
-         'product': product,
-         'product_attributes': product_attributes,
-         'product_images': product_images,
-         'show_variant_picker': show_variant_picker,
-         'variant_picker_data': json.dumps(
-             variant_picker_data, default=serialize_decimal),
-         'json_ld_product_data': json.dumps(
-             json_ld_data, default=serialize_decimal)})
+    json_ld_data = product_json_ld(product, product_attributes)
+    ctx = {
+        "is_visible": is_visible,
+        "form": form,
+        "availability": availability,
+        "product": product,
+        "product_attributes": product_attributes,
+        "product_images": product_images,
+        "show_variant_picker": show_variant_picker,
+        "variant_picker_data": json.dumps(
+            variant_picker_data, default=serialize_decimal
+        ),
+        "json_ld_product_data": json.dumps(json_ld_data, default=serialize_decimal),
+    }
+    return TemplateResponse(request, "product/details.html", ctx)
 
 
-def product_add_to_cart(request, slug, product_id):
-    # types: (int, str, dict) -> None
+def digital_product(request, token: str) -> Union[FileResponse, HttpResponseNotFound]:
+    """Returns direct download link to content if given token is still valid"""
 
-    if not request.method == 'POST':
-        return redirect(reverse(
-            'product:details',
-            kwargs={'product_id': product_id, 'slug': slug}))
+    qs = DigitalContentUrl.objects.prefetch_related("line__order__user")
+    content_url = get_object_or_404(qs, token=token)  # type: DigitalContentUrl
+    if not digital_content_url_is_valid(content_url):
+        return HttpResponseNotFound("Url is not valid anymore")
 
-    products = products_for_cart(user=request.user)
-    product = get_object_or_404(products, pk=product_id)
-    form, cart = handle_cart_form(request, product, create_cart=True)
-    if form.is_valid():
-        form.save()
-        if request.is_ajax():
-            response = JsonResponse({'next': reverse('cart:index')}, status=200)
-        else:
-            response = redirect('cart:index')
-    else:
-        if request.is_ajax():
-            response = JsonResponse({'error': form.errors}, status=400)
-        else:
-            response = product_details(request, slug, product_id, form)
-    if not request.user.is_authenticated:
-        set_cart_cookie(cart, response)
+    digital_content = content_url.content
+    digital_content.content_file.open()
+    opened_file = digital_content.content_file.file
+    filename = os.path.basename(digital_content.content_file.name)
+    file_expr = 'filename="{}"'.format(filename)
+
+    content_type = mimetypes.guess_type(str(filename))[0]
+    response = FileResponse(opened_file)
+    response["Content-Length"] = digital_content.content_file.size
+
+    response["Content-Type"] = content_type
+    response["Content-Disposition"] = "attachment; {}".format(file_expr)
+
+    increment_download_count(content_url)
     return response
 
 
-def category_index(request, path, category_id):
-    category = get_object_or_404(Category, id=category_id)
-    actual_path = category.get_full_path()
-    if actual_path != path:
-        return redirect('product:category', permanent=True, path=actual_path,
-                        category_id=category_id)
-    products = (products_with_details(user=request.user)
-                .filter(categories__id=category.id)
-                .order_by('name'))
-    product_filter = ProductFilter(
-        request.GET, queryset=products, category=category)
-    products_paginated = get_paginator_items(
-        product_filter.qs, PAGINATE_BY, request.GET.get('page'))
-    products_and_availability = list(products_with_availability(
-        products_paginated, request.discounts, request.currency))
-    now_sorted_by = get_now_sorted_by(product_filter)
-    arg_sort_by = request.GET.get('sort_by')
-    is_descending = arg_sort_by.startswith('-') if arg_sort_by else False
-    ctx = {'category': category, 'filter': product_filter,
-           'products': products_and_availability,
-           'products_paginated': products_paginated,
-           'sort_by_choices': get_sort_by_choices(product_filter),
-           'now_sorted_by': now_sorted_by,
-           'is_descending': is_descending}
-    return TemplateResponse(request, 'category/index.html', ctx)
+def product_add_to_checkout(request, slug, product_id):
+    # types: (int, str, dict) -> None
+
+    if not request.method == "POST":
+        return redirect(
+            reverse("product:details", kwargs={"product_id": product_id, "slug": slug})
+        )
+
+    products = products_for_checkout(user=request.user)
+    product = get_object_or_404(products, pk=product_id)
+    form, checkout = handle_checkout_form(request, product, create_checkout=True)
+    if form.is_valid():
+        form.save()
+        if request.is_ajax():
+            response = JsonResponse({"next": reverse("checkout:index")}, status=200)
+        else:
+            response = redirect("checkout:index")
+    else:
+        if request.is_ajax():
+            response = JsonResponse({"error": form.errors}, status=400)
+        else:
+            response = product_details(request, slug, product_id, form)
+    if not request.user.is_authenticated:
+        set_checkout_cookie(checkout, response)
+    return response
+
+
+def category_index(request, slug, category_id):
+    categories = Category.objects.prefetch_related("translations")
+    category = get_object_or_404(categories, id=category_id)
+    if slug != category.slug:
+        return redirect(
+            "product:category",
+            permanent=True,
+            slug=category.slug,
+            category_id=category_id,
+        )
+    # Check for subcategories
+    categories = category.get_descendants(include_self=True)
+    products = (
+        products_for_products_list(user=request.user)
+        .filter(category__in=categories)
+        .order_by("name")
+        .prefetch_related("collections")
+    )
+    product_filter = ProductCategoryFilter(
+        request.GET, queryset=products, category=category
+    )
+    ctx = get_product_list_context(request, product_filter)
+    ctx.update({"object": category})
+    return TemplateResponse(request, "category/index.html", ctx)
+
+
+def collection_index(request, slug, pk):
+    collections = collections_visible_to_user(request.user).prefetch_related(
+        "translations"
+    )
+    collection = get_object_or_404(collections, id=pk)
+    if collection.slug != slug:
+        return HttpResponsePermanentRedirect(collection.get_absolute_url())
+    products = (
+        products_for_products_list(user=request.user)
+        .filter(collections__id=collection.id)
+        .order_by("name")
+    )
+    product_filter = ProductCollectionFilter(
+        request.GET, queryset=products, collection=collection
+    )
+    ctx = get_product_list_context(request, product_filter)
+    ctx.update({"object": collection})
+    return TemplateResponse(request, "collection/index.html", ctx)
