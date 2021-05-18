@@ -1,91 +1,28 @@
 import logging
-from functools import wraps
-from typing import Callable
+from datetime import datetime
 
-import django.contrib.auth.middleware
-import django.contrib.messages.middleware
-import django.contrib.sessions.middleware
-import django.middleware.common
-import django.middleware.csrf
-import django.middleware.locale
-import django.middleware.security
-import django_babel.middleware
-import impersonate.middleware
-import social_django.middleware
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.exceptions import MiddlewareNotUsed
-from django.urls import reverse
 from django.utils import timezone
 from django.utils.functional import SimpleLazyObject
 from django.utils.translation import get_language
-from django_countries.fields import Country
 
 from ..discount.utils import fetch_discounts
+from ..plugins.manager import get_plugins_manager
 from . import analytics
-from .utils import get_client_ip, get_country_by_ip, get_currency_for_country
+from .jwt import JWT_REFRESH_TOKEN_COOKIE_NAME, jwt_decode_with_exception_handler
 
 logger = logging.getLogger(__name__)
 
 
-def django_only_request_handler(get_response: Callable, handler: Callable):
-    api_path = reverse("api")
-
-    @wraps(handler)
-    def handle_request(request):
-        if request.path == api_path:
-            return get_response(request)
-        return handler(request)
-
-    return handle_request
-
-
-def django_only_middleware(middleware):
-    @wraps(middleware)
-    def wrapped(get_response):
-        handler = middleware(get_response)
-        return django_only_request_handler(get_response, handler)
-
-    return wrapped
-
-
-social_auth_exception_middleware = django_only_middleware(
-    social_django.middleware.SocialAuthExceptionMiddleware
-)
-impersonate_middleware = django_only_middleware(
-    impersonate.middleware.ImpersonateMiddleware
-)
-babel_locale_middleware = django_only_middleware(
-    django_babel.middleware.LocaleMiddleware
-)
-django_locale_middleware = django_only_middleware(
-    django.middleware.locale.LocaleMiddleware
-)
-django_messages_middleware = django_only_middleware(
-    django.contrib.messages.middleware.MessageMiddleware
-)
-django_auth_middleware = django_only_middleware(
-    django.contrib.auth.middleware.AuthenticationMiddleware
-)
-django_csrf_view_middleware = django_only_middleware(
-    django.middleware.csrf.CsrfViewMiddleware
-)
-django_security_middleware = django_only_middleware(
-    django.middleware.security.SecurityMiddleware
-)
-django_session_middleware = django_only_middleware(
-    django.contrib.sessions.middleware.SessionMiddleware
-)
-
-
-@django_only_middleware
 def google_analytics(get_response):
     """Report a page view to Google Analytics."""
 
     if not settings.GOOGLE_ANALYTICS_TRACKING_ID:
         raise MiddlewareNotUsed()
 
-    def middleware(request):
+    def _google_analytics_middleware(request):
         client_id = analytics.get_client_id(request)
         path = request.path
         language = get_language()
@@ -98,44 +35,27 @@ def google_analytics(get_response):
             logger.exception("Unable to update analytics")
         return get_response(request)
 
-    return middleware
+    return _google_analytics_middleware
+
+
+def request_time(get_response):
+    def _stamp_request(request):
+        request.request_time = timezone.now()
+        return get_response(request)
+
+    return _stamp_request
 
 
 def discounts(get_response):
     """Assign active discounts to `request.discounts`."""
 
-    def middleware(request):
-        request.discounts = SimpleLazyObject(lambda: fetch_discounts(timezone.now()))
+    def _discounts_middleware(request):
+        request.discounts = SimpleLazyObject(
+            lambda: fetch_discounts(request.request_time)
+        )
         return get_response(request)
 
-    return middleware
-
-
-def country(get_response):
-    """Detect the user's country and assign it to `request.country`."""
-
-    def middleware(request):
-        client_ip = get_client_ip(request)
-        if client_ip:
-            request.country = get_country_by_ip(client_ip)
-        if not request.country:
-            request.country = Country(settings.DEFAULT_COUNTRY)
-        return get_response(request)
-
-    return middleware
-
-
-def currency(get_response):
-    """Take a country and assign a matching currency to `request.currency`."""
-
-    def middleware(request):
-        if hasattr(request, "country") and request.country is not None:
-            request.currency = get_currency_for_country(request.country)
-        else:
-            request.currency = settings.DEFAULT_CURRENCY
-        return get_response(request)
-
-    return middleware
+    return _discounts_middleware
 
 
 def site(get_response):
@@ -151,27 +71,48 @@ def site(get_response):
         Site.objects.clear_cache()
         return Site.objects.get_current()
 
-    def middleware(request):
+    def _site_middleware(request):
         request.site = SimpleLazyObject(_get_site)
         return get_response(request)
 
-    return middleware
+    return _site_middleware
 
 
-def taxes(get_response):
-    """Assign tax rates for default country to `request.taxes`."""
+def plugins(get_response):
+    """Assign plugins manager."""
 
-    def middleware(request):
-        if settings.VATLAYER_ACCESS_KEY:
-            # FIXME this should be disabled after we will introduce plugin architecure.
-            # For now, a lot of templates use tax_rate function.
-            from .taxes.vatlayer import get_taxes_for_country
+    def _get_manager():
+        return get_plugins_manager()
 
-            request.taxes = SimpleLazyObject(
-                lambda: get_taxes_for_country(request.country)
-            )
-        else:
-            request.taxes = None
+    def _plugins_middleware(request):
+        request.plugins = SimpleLazyObject(lambda: _get_manager())
         return get_response(request)
+
+    return _plugins_middleware
+
+
+def jwt_refresh_token_middleware(get_response):
+    def middleware(request):
+        """Append generated refresh_token to response object."""
+        response = get_response(request)
+        jwt_refresh_token = getattr(request, "refresh_token", None)
+        if jwt_refresh_token:
+            expires = None
+            if settings.JWT_EXPIRE:
+                refresh_token_payload = jwt_decode_with_exception_handler(
+                    jwt_refresh_token
+                )
+                if refresh_token_payload and refresh_token_payload.get("exp"):
+                    expires = datetime.utcfromtimestamp(
+                        refresh_token_payload.get("exp")
+                    )
+            response.set_cookie(
+                JWT_REFRESH_TOKEN_COOKIE_NAME,
+                jwt_refresh_token,
+                expires=expires,
+                httponly=True,  # protects token from leaking
+                secure=not settings.DEBUG,
+            )
+        return response
 
     return middleware

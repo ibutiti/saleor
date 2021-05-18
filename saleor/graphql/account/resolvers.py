@@ -1,11 +1,24 @@
-import graphene_django_optimizer as gql_optimizer
-from django.db.models import Q
+from itertools import chain
+from typing import Optional
+
+from django.contrib.auth import models as auth_models
 from i18naddress import get_validation_rules
 
 from ...account import models
-from ...core.utils import get_client_ip, get_country_by_ip
-from ..utils import filter_by_query_param
+from ...core.exceptions import PermissionDenied
+from ...core.permissions import AccountPermissions
+from ...core.tracing import traced_resolver
+from ...payment import gateway
+from ...payment.utils import fetch_customer_id
+from ..core.utils import from_global_id_or_error
+from ..utils import format_permissions_for_display, get_user_or_app_from_context
+from ..utils.filters import filter_by_query_param
 from .types import AddressValidationData, ChoiceValue
+from .utils import (
+    get_allowed_fields_camel_case,
+    get_required_fields_camel_case,
+    get_user_permissions,
+)
 
 USER_SEARCH_FIELDS = (
     "email",
@@ -18,39 +31,62 @@ USER_SEARCH_FIELDS = (
 )
 
 
-def resolve_customers(info, query):
-    qs = models.User.objects.filter(
-        Q(is_staff=False) | (Q(is_staff=True) & Q(orders__isnull=False))
-    )
+@traced_resolver
+def resolve_customers(info, query, **_kwargs):
+    qs = models.User.objects.customers()
     qs = filter_by_query_param(
         queryset=qs, query=query, search_fields=USER_SEARCH_FIELDS
     )
-    qs = qs.order_by("email")
-    qs = qs.distinct()
-    return gql_optimizer.query(qs, info)
+    return qs.distinct()
 
 
-def resolve_staff_users(info, query):
-    qs = models.User.objects.filter(is_staff=True)
+@traced_resolver
+def resolve_permission_groups(info, **_kwargs):
+    return auth_models.Group.objects.all()
+
+
+@traced_resolver
+def resolve_staff_users(info, query, **_kwargs):
+    qs = models.User.objects.staff()
     qs = filter_by_query_param(
         queryset=qs, query=query, search_fields=USER_SEARCH_FIELDS
     )
-    qs = qs.order_by("email")
-    qs = qs.distinct()
-    return gql_optimizer.query(qs, info)
+    return qs.distinct()
 
 
-def resolve_address_validator(info, country_code, country_area, city_area):
-    if not country_code:
-        client_ip = get_client_ip(info.context)
-        country = get_country_by_ip(client_ip)
-        if country:
-            country_code = country.code
-        else:
-            return None
+@traced_resolver
+def resolve_user(info, id=None, email=None):
+    requester = get_user_or_app_from_context(info.context)
+    if requester:
+        filter_kwargs = {}
+        if id:
+            _model, filter_kwargs["pk"] = from_global_id_or_error(id)
+        if email:
+            filter_kwargs["email"] = email
+        if requester.has_perms(
+            [AccountPermissions.MANAGE_STAFF, AccountPermissions.MANAGE_USERS]
+        ):
+            return models.User.objects.filter(**filter_kwargs).first()
+        if requester.has_perm(AccountPermissions.MANAGE_STAFF):
+            return models.User.objects.staff().filter(**filter_kwargs).first()
+        if requester.has_perm(AccountPermissions.MANAGE_USERS):
+            return models.User.objects.customers().filter(**filter_kwargs).first()
+    return PermissionDenied()
+
+
+@traced_resolver
+def resolve_address_validation_rules(
+    info,
+    country_code: str,
+    country_area: Optional[str],
+    city: Optional[str],
+    city_area: Optional[str],
+):
+
     params = {
         "country_code": country_code,
         "country_area": country_area,
+        "city": city,
         "city_area": city_area,
     }
     rules = get_validation_rules(params)
@@ -59,8 +95,8 @@ def resolve_address_validator(info, country_code, country_area, city_area):
         country_name=rules.country_name,
         address_format=rules.address_format,
         address_latin_format=rules.address_latin_format,
-        allowed_fields=rules.allowed_fields,
-        required_fields=rules.required_fields,
+        allowed_fields=get_allowed_fields_camel_case(rules.allowed_fields),
+        required_fields=get_required_fields_camel_case(rules.required_fields),
         upper_fields=rules.upper_fields,
         country_area_type=rules.country_area_type,
         country_area_choices=[
@@ -79,3 +115,61 @@ def resolve_address_validator(info, country_code, country_area, city_area):
         postal_code_examples=rules.postal_code_examples,
         postal_code_prefix=rules.postal_code_prefix,
     )
+
+
+@traced_resolver
+def resolve_payment_sources(info, user: models.User, channel_slug: str):
+    manager = info.context.plugins
+    stored_customer_accounts = (
+        (gtw.id, fetch_customer_id(user, gtw.id))
+        for gtw in gateway.list_gateways(manager, channel_slug)
+    )
+    return list(
+        chain(
+            *[
+                prepare_graphql_payment_sources_type(
+                    gateway.list_payment_sources(
+                        gtw, customer_id, manager, channel_slug
+                    )
+                )
+                for gtw, customer_id in stored_customer_accounts
+                if customer_id is not None
+            ]
+        )
+    )
+
+
+def prepare_graphql_payment_sources_type(payment_sources):
+    sources = []
+    for src in payment_sources:
+        sources.append(
+            {
+                "gateway": src.gateway,
+                "credit_card_info": {
+                    "last_digits": src.credit_card_info.last_4,
+                    "exp_year": src.credit_card_info.exp_year,
+                    "exp_month": src.credit_card_info.exp_month,
+                    "brand": "",
+                    "first_digits": "",
+                },
+            }
+        )
+    return sources
+
+
+@traced_resolver
+def resolve_address(info, id):
+    user = info.context.user
+    app = info.context.app
+    _model, address_pk = from_global_id_or_error(id)
+    if app and app.has_perm(AccountPermissions.MANAGE_USERS):
+        return models.Address.objects.filter(pk=address_pk).first()
+    if user and not user.is_anonymous:
+        return user.addresses.filter(id=address_pk).first()
+    return PermissionDenied()
+
+
+def resolve_permissions(root: models.User):
+    permissions = get_user_permissions(root)
+    permissions = permissions.order_by("codename")
+    return format_permissions_for_display(permissions)

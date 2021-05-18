@@ -1,44 +1,30 @@
-from django.contrib.postgres.fields import JSONField
 from django.db import models
-from django.urls import reverse
-from django.utils.translation import pgettext_lazy
 
-from ..core.models import PublishableModel, PublishedQuerySet
-from ..core.utils import build_absolute_uri
+from ..core.db.fields import SanitizedJSONField
+from ..core.models import ModelWithMetadata, PublishableModel
+from ..core.permissions import PagePermissions, PageTypePermissions
+from ..core.utils.editorjs import clean_editor_js
 from ..core.utils.translations import TranslationProxy
 from ..seo.models import SeoModel, SeoModelTranslation
 
 
-class PagePublishedQuerySet(PublishedQuerySet):
-    @staticmethod
-    def user_has_access_to_all(user):
-        return user.is_active and user.has_perm("page.manage_pages")
-
-
-class Page(SeoModel, PublishableModel):
-    slug = models.SlugField(unique=True, max_length=100)
-    title = models.CharField(max_length=200)
-    content = models.TextField(blank=True)
-    content_json = JSONField(blank=True, default=dict)
+class Page(ModelWithMetadata, SeoModel, PublishableModel):
+    slug = models.SlugField(unique=True, max_length=255)
+    title = models.CharField(max_length=250)
+    page_type = models.ForeignKey(
+        "PageType", related_name="pages", on_delete=models.CASCADE
+    )
+    content = SanitizedJSONField(blank=True, null=True, sanitizer=clean_editor_js)
     created = models.DateTimeField(auto_now_add=True)
 
-    objects = PagePublishedQuerySet.as_manager()
     translated = TranslationProxy()
 
-    class Meta:
+    class Meta(ModelWithMetadata.Meta):
         ordering = ("slug",)
-        permissions = (
-            ("manage_pages", pgettext_lazy("Permission description", "Manage pages.")),
-        )
+        permissions = ((PagePermissions.MANAGE_PAGES.codename, "Manage pages."),)
 
     def __str__(self):
         return self.title
-
-    def get_absolute_url(self):
-        return reverse("page:details", kwargs={"slug": self.slug})
-
-    def get_full_url(self):
-        return build_absolute_uri(self.get_absolute_url())
 
 
 class PageTranslation(SeoModelTranslation):
@@ -47,10 +33,10 @@ class PageTranslation(SeoModelTranslation):
         Page, related_name="translations", on_delete=models.CASCADE
     )
     title = models.CharField(max_length=255, blank=True)
-    content = models.TextField(blank=True)
-    content_json = JSONField(blank=True, default=dict)
+    content = SanitizedJSONField(blank=True, null=True, sanitizer=clean_editor_js)
 
     class Meta:
+        ordering = ("language_code", "page", "pk")
         unique_together = (("language_code", "page"),)
 
     def __repr__(self):
@@ -64,3 +50,17 @@ class PageTranslation(SeoModelTranslation):
 
     def __str__(self):
         return self.title
+
+
+class PageType(ModelWithMetadata):
+    name = models.CharField(max_length=250)
+    slug = models.SlugField(max_length=255, unique=True, allow_unicode=True)
+
+    class Meta(ModelWithMetadata.Meta):
+        ordering = ("slug",)
+        permissions = (
+            (
+                PageTypePermissions.MANAGE_PAGE_TYPES_AND_ATTRIBUTES.codename,
+                "Manage page types and attributes.",
+            ),
+        )

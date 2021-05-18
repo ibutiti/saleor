@@ -1,77 +1,81 @@
-from django.utils.translation import pgettext_lazy
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from ..product.models import ProductVariant
+    from .models import FulfillmentLine, OrderLine
 
 
 class OrderStatus:
-    DRAFT = "draft"
-    UNFULFILLED = "unfulfilled"
-    PARTIALLY_FULFILLED = "partially fulfilled"
-    FULFILLED = "fulfilled"
-    CANCELED = "canceled"
+    DRAFT = "draft"  # fully editable, not finalized order created by staff users
+    UNCONFIRMED = (
+        "unconfirmed"  # order created by customers when confirmation is required
+    )
+    UNFULFILLED = "unfulfilled"  # order with no items marked as fulfilled
+    PARTIALLY_FULFILLED = (
+        "partially fulfilled"  # order with some items marked as fulfilled
+    )
+    FULFILLED = "fulfilled"  # order with all items marked as fulfilled
+
+    PARTIALLY_RETURNED = (
+        "partially_returned"  # order with some items marked as returned
+    )
+    RETURNED = "returned"  # order with all items marked as returned
+    CANCELED = "canceled"  # permanently canceled order
 
     CHOICES = [
-        (
-            DRAFT,
-            pgettext_lazy(
-                "Status for a fully editable, not confirmed order created by "
-                "staff users",
-                "Draft",
-            ),
-        ),
-        (
-            UNFULFILLED,
-            pgettext_lazy(
-                "Status for an order with no items marked as fulfilled", "Unfulfilled"
-            ),
-        ),
-        (
-            PARTIALLY_FULFILLED,
-            pgettext_lazy(
-                "Status for an order with some items marked as fulfilled",
-                "Partially fulfilled",
-            ),
-        ),
-        (
-            FULFILLED,
-            pgettext_lazy(
-                "Status for an order with all items marked as fulfilled", "Fulfilled"
-            ),
-        ),
-        (
-            CANCELED,
-            pgettext_lazy("Status for a permanently canceled order", "Canceled"),
-        ),
+        (DRAFT, "Draft"),
+        (UNCONFIRMED, "Unconfirmed"),
+        (UNFULFILLED, "Unfulfilled"),
+        (PARTIALLY_FULFILLED, "Partially fulfilled"),
+        (PARTIALLY_RETURNED, "Partially returned"),
+        (RETURNED, "Returned"),
+        (FULFILLED, "Fulfilled"),
+        (CANCELED, "Canceled"),
+    ]
+
+
+class OrderOrigin:
+    CHECKOUT = "checkout"  # order created from checkout
+    DRAFT = "draft"  # order created from draft order
+    REISSUE = "reissue"  # order created from reissue existing one
+
+    CHOICES = [
+        (CHECKOUT, "Checkout"),
+        (DRAFT, "Draft"),
+        (REISSUE, "Reissue"),
     ]
 
 
 class FulfillmentStatus:
-    FULFILLED = "fulfilled"
-    CANCELED = "canceled"
+    FULFILLED = "fulfilled"  # group of products in an order marked as fulfilled
+    REFUNDED = "refunded"  # group of refunded products
+    RETURNED = "returned"  # group of returned products
+    REFUNDED_AND_RETURNED = (
+        "refunded_and_returned"  # group of returned and replaced products
+    )
+    REPLACED = "replaced"  # group of replaced products
+    CANCELED = "canceled"  # fulfilled group of products in an order marked as canceled
 
     CHOICES = [
-        (
-            FULFILLED,
-            pgettext_lazy(
-                "Status for a group of products in an order marked as fulfilled",
-                "Fulfilled",
-            ),
-        ),
-        (
-            CANCELED,
-            pgettext_lazy(
-                "Status for a fulfilled group of products in an order marked "
-                "as canceled",
-                "Canceled",
-            ),
-        ),
+        (FULFILLED, "Fulfilled"),
+        (REFUNDED, "Refunded"),
+        (RETURNED, "Returned"),
+        (REPLACED, "Replaced"),
+        (REFUNDED_AND_RETURNED, "Refunded and returned"),
+        (CANCELED, "Canceled"),
     ]
 
 
 class OrderEvents:
     """The different order event types."""
 
+    CONFIRMED = "confirmed"
     DRAFT_CREATED = "draft_created"
-    DRAFT_ADDED_PRODUCTS = "draft_added_products"
-    DRAFT_REMOVED_PRODUCTS = "draft_removed_products"
+    DRAFT_CREATED_FROM_REPLACE = "draft_created_from_replace"
+
+    ADDED_PRODUCTS = "added_products"
+    REMOVED_PRODUCTS = "removed_products"
 
     PLACED = "placed"
     PLACED_FROM_DRAFT = "placed_from_draft"
@@ -81,19 +85,37 @@ class OrderEvents:
 
     ORDER_MARKED_AS_PAID = "order_marked_as_paid"
     ORDER_FULLY_PAID = "order_fully_paid"
+    ORDER_REPLACEMENT_CREATED = "order_replacement_created"
+
+    ORDER_DISCOUNT_ADDED = "order_discount_added"
+    ORDER_DISCOUNT_AUTOMATICALLY_UPDATED = "order_discount_automatically_updated"
+    ORDER_DISCOUNT_UPDATED = "order_discount_updated"
+    ORDER_DISCOUNT_DELETED = "order_discount_deleted"
+    ORDER_LINE_DISCOUNT_UPDATED = "order_line_discount_updated"
+    ORDER_LINE_DISCOUNT_REMOVED = "order_line_discount_removed"
 
     UPDATED_ADDRESS = "updated_address"
 
     EMAIL_SENT = "email_sent"
 
+    PAYMENT_AUTHORIZED = "payment_authorized"
     PAYMENT_CAPTURED = "payment_captured"
     PAYMENT_REFUNDED = "payment_refunded"
     PAYMENT_VOIDED = "payment_voided"
     PAYMENT_FAILED = "payment_failed"
+    EXTERNAL_SERVICE_NOTIFICATION = "external_service_notification"
+
+    INVOICE_REQUESTED = "invoice_requested"
+    INVOICE_GENERATED = "invoice_generated"
+    INVOICE_UPDATED = "invoice_updated"
+    INVOICE_SENT = "invoice_sent"
 
     FULFILLMENT_CANCELED = "fulfillment_canceled"
     FULFILLMENT_RESTOCKED_ITEMS = "fulfillment_restocked_items"
     FULFILLMENT_FULFILLED_ITEMS = "fulfillment_fulfilled_items"
+    FULFILLMENT_REFUNDED = "fulfillment_refunded"
+    FULFILLMENT_RETURNED = "fulfillment_returned"
+    FULFILLMENT_REPLACED = "fulfillment_replaced"
     TRACKING_UPDATED = "tracking_updated"
     NOTE_ADDED = "note_added"
 
@@ -101,213 +123,88 @@ class OrderEvents:
     OTHER = "other"
 
     CHOICES = [
+        (DRAFT_CREATED, "The draft order was created"),
+        (DRAFT_CREATED_FROM_REPLACE, "The draft order with replace lines was created"),
+        (ADDED_PRODUCTS, "Some products were added to the order"),
+        (REMOVED_PRODUCTS, "Some products were removed from the order"),
+        (PLACED, "The order was placed"),
+        (PLACED_FROM_DRAFT, "The draft order was placed"),
+        (OVERSOLD_ITEMS, "The draft order was placed with oversold items"),
+        (CANCELED, "The order was canceled"),
+        (ORDER_MARKED_AS_PAID, "The order was manually marked as fully paid"),
+        (ORDER_FULLY_PAID, "The order was fully paid"),
+        (ORDER_REPLACEMENT_CREATED, "The draft order was created based on this order."),
+        (ORDER_DISCOUNT_ADDED, "New order discount applied to this order."),
         (
-            DRAFT_CREATED,
-            pgettext_lazy(
-                "Event from a staff user that created a draft order",
-                "The draft order was created",
-            ),
+            ORDER_DISCOUNT_AUTOMATICALLY_UPDATED,
+            "Order discount was automatically updated after the changes in order.",
         ),
-        (
-            DRAFT_ADDED_PRODUCTS,
-            pgettext_lazy(
-                "Event from a staff user that added products to a draft order",
-                "Some products were added to the draft order",
-            ),
-        ),
-        (
-            DRAFT_REMOVED_PRODUCTS,
-            pgettext_lazy(
-                "Event from a staff user that removed products from a draft order",
-                "Some products were removed from the draft order",
-            ),
-        ),
-        (
-            PLACED,
-            pgettext_lazy(
-                "Event from a user or anonymous user that placed their order",
-                "The order was placed",
-            ),
-        ),
-        (
-            PLACED_FROM_DRAFT,
-            pgettext_lazy(
-                "Event from a staff user that placed a draft order",
-                "The draft order was placed",
-            ),
-        ),
-        (
-            OVERSOLD_ITEMS,
-            pgettext_lazy(
-                "Event from a staff user that placed a draft order by passing "
-                "oversold items",
-                "The draft order was placed with oversold items",
-            ),
-        ),
-        (
-            CANCELED,
-            pgettext_lazy(
-                "Event from a staff user that canceled an order",
-                "The order was canceled",
-            ),
-        ),
-        (
-            ORDER_MARKED_AS_PAID,
-            pgettext_lazy(
-                "Event from a staff user that manually marked an order as "
-                "fully paid",
-                "The order was manually marked as fully paid",
-            ),
-        ),
-        (
-            ORDER_FULLY_PAID,
-            pgettext_lazy(
-                "Event from a payment that made the order to be fully paid",
-                "The order was fully paid",
-            ),
-        ),
-        (
-            UPDATED_ADDRESS,
-            pgettext_lazy(
-                "Event from a staff user that updated an address of a " "placed order",
-                "The address from the placed order was updated",
-            ),
-        ),
-        (
-            EMAIL_SENT,
-            pgettext_lazy(
-                "Event generated from a user action that led to a " "email being sent",
-                "The email was sent",
-            ),
-        ),
-        (
-            PAYMENT_CAPTURED,
-            pgettext_lazy(
-                "Event from a user payment that successfully captured a "
-                "given amount of money",
-                "The payment was captured",
-            ),
-        ),
-        (
-            PAYMENT_REFUNDED,
-            pgettext_lazy(
-                "Event from a staff user that successfully refunded a payment",
-                "The payment was refunded",
-            ),
-        ),
-        (
-            PAYMENT_VOIDED,
-            pgettext_lazy(
-                "Event from a staff user that successfully voided an "
-                "authorized payment",
-                "The payment was voided",
-            ),
-        ),
-        (
-            PAYMENT_FAILED,
-            pgettext_lazy(
-                "Event from a user that generated an unsuccessful payment",
-                "The payment was failed",
-            ),
-        ),
-        (
-            FULFILLMENT_CANCELED,
-            pgettext_lazy(
-                "Event from a staff user that canceled a fulfillment",
-                "A fulfillment was canceled",
-            ),
-        ),
-        (
-            FULFILLMENT_RESTOCKED_ITEMS,
-            pgettext_lazy(
-                "Event from a staff user that restocked the items that were used "
-                "for a fulfillment",
-                "The items of the fulfillment were restocked",
-            ),
-        ),
-        (
-            FULFILLMENT_FULFILLED_ITEMS,
-            pgettext_lazy(
-                "Event from a staff user that fulfilled some items",
-                "Some items were fulfilled",
-            ),
-        ),
-        (
-            TRACKING_UPDATED,
-            pgettext_lazy(
-                "Event from a staff user that updated the tracking code of an "
-                "existing fulfillment",
-                "The fulfillment's tracking code was updated",
-            ),
-        ),
-        (
-            NOTE_ADDED,
-            pgettext_lazy(
-                "Event from an user that added a note to an order",
-                "A note was added to the order",
-            ),
-        ),
-        (
-            OTHER,
-            pgettext_lazy(
-                "An other type of order event containing a message",
-                "An unknown order event containing a message",
-            ),
-        ),
+        (ORDER_DISCOUNT_UPDATED, "Order discount was updated for this order."),
+        (ORDER_DISCOUNT_DELETED, "Order discount was deleted for this order."),
+        (ORDER_LINE_DISCOUNT_UPDATED, "Order line was discounted."),
+        (ORDER_LINE_DISCOUNT_REMOVED, "The discount for order line was removed."),
+        (UPDATED_ADDRESS, "The address from the placed order was updated"),
+        (EMAIL_SENT, "The email was sent"),
+        (CONFIRMED, "Order was confirmed"),
+        (PAYMENT_AUTHORIZED, "The payment was authorized"),
+        (PAYMENT_CAPTURED, "The payment was captured"),
+        (EXTERNAL_SERVICE_NOTIFICATION, "Notification from external service"),
+        (PAYMENT_REFUNDED, "The payment was refunded"),
+        (PAYMENT_VOIDED, "The payment was voided"),
+        (PAYMENT_FAILED, "The payment was failed"),
+        (INVOICE_REQUESTED, "An invoice was requested"),
+        (INVOICE_GENERATED, "An invoice was generated"),
+        (INVOICE_UPDATED, "An invoice was updated"),
+        (INVOICE_SENT, "An invoice was sent"),
+        (FULFILLMENT_CANCELED, "A fulfillment was canceled"),
+        (FULFILLMENT_RESTOCKED_ITEMS, "The items of the fulfillment were restocked"),
+        (FULFILLMENT_FULFILLED_ITEMS, "Some items were fulfilled"),
+        (FULFILLMENT_REFUNDED, "Some items were refunded"),
+        (FULFILLMENT_RETURNED, "Some items were returned"),
+        (FULFILLMENT_REPLACED, "Some items were replaced"),
+        (TRACKING_UPDATED, "The fulfillment's tracking code was updated"),
+        (NOTE_ADDED, "A note was added to the order"),
+        (OTHER, "An unknown order event containing a message"),
     ]
 
 
 class OrderEventsEmails:
     """The different order emails event types."""
 
+    CONFIRMED = "confirmed"
     PAYMENT = "payment_confirmation"
     SHIPPING = "shipping_confirmation"
     TRACKING_UPDATED = "tracking_updated"
-    ORDER = "order_confirmation"
+    ORDER_CONFIRMATION = "order_confirmation"
+    ORDER_CANCEL = "order_cancel"
+    ORDER_REFUND = "order_refund"
     FULFILLMENT = "fulfillment_confirmation"
     DIGITAL_LINKS = "digital_links"
 
     CHOICES = [
-        (
-            PAYMENT,
-            pgettext_lazy(
-                "A payment confirmation email was sent",
-                "The payment confirmation email was sent",
-            ),
-        ),
-        (
-            SHIPPING,
-            pgettext_lazy(
-                "A shipping confirmation email was sent",
-                "The shipping confirmation email was sent",
-            ),
-        ),
-        (
-            TRACKING_UPDATED,
-            pgettext_lazy(
-                "A tracking code update confirmation email was sent",
-                "The fulfillment tracking code email was sent",
-            ),
-        ),
-        (
-            ORDER,
-            pgettext_lazy(
-                "A order confirmation email was sent",
-                "The order placement confirmation email was sent",
-            ),
-        ),
-        (
-            FULFILLMENT,
-            pgettext_lazy(
-                "A fulfillment confirmation email was sent",
-                "The fulfillment confirmation email was sent",
-            ),
-        ),
-        (
-            DIGITAL_LINKS,
-            pgettext_lazy(
-                "An email containing a or some digital link was sent",
-                "The email containing the digital links was sent",
-            ),
-        ),
+        (PAYMENT, "The payment confirmation email was sent"),
+        (CONFIRMED, "The order confirmed email was sent"),
+        (SHIPPING, "The shipping confirmation email was sent"),
+        (TRACKING_UPDATED, "The fulfillment tracking code email was sent"),
+        (ORDER_CONFIRMATION, "The order placement confirmation email was sent"),
+        (ORDER_CANCEL, "The order cancel confirmation email was sent"),
+        (ORDER_REFUND, "The order refund confirmation email was sent"),
+        (FULFILLMENT, "The fulfillment confirmation email was sent"),
+        (DIGITAL_LINKS, "The email containing the digital links was sent"),
     ]
+
+
+@dataclass
+class OrderLineData:
+    line: "OrderLine"
+    quantity: int
+    variant: Optional["ProductVariant"] = None
+    replace: bool = False
+    warehouse_pk: Optional[str] = None
+
+
+@dataclass
+class FulfillmentLineData:
+    line: "FulfillmentLine"
+    quantity: int
+    replace: bool = False

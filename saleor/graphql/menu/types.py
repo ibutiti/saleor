@@ -1,63 +1,77 @@
 import graphene
-import graphene_django_optimizer as gql_optimizer
-from django.db.models import Prefetch
 from graphene import relay
 
+from ...account.utils import requestor_is_staff_member_or_app
+from ...core.permissions import PagePermissions
+from ...core.tracing import traced_resolver
 from ...menu import models
+from ..channel.dataloaders import ChannelBySlugLoader
+from ..channel.types import (
+    ChannelContext,
+    ChannelContextType,
+    ChannelContextTypeWithMetadata,
+)
 from ..core.connection import CountableDjangoObjectType
-from ..translations.enums import LanguageCodeEnum
-from ..translations.resolvers import resolve_translation
+from ..meta.types import ObjectWithMetadata
+from ..page.dataloaders import PageByIdLoader
+from ..product.dataloaders import (
+    CategoryByIdLoader,
+    CollectionByIdLoader,
+    CollectionChannelListingByCollectionIdAndChannelSlugLoader,
+)
+from ..translations.fields import TranslationField
 from ..translations.types import MenuItemTranslation
+from ..utils import get_user_or_app_from_context
+from .dataloaders import (
+    MenuByIdLoader,
+    MenuItemByIdLoader,
+    MenuItemChildrenLoader,
+    MenuItemsByParentMenuLoader,
+)
 
 
-def prefetch_menus(info, *_args, **_kwargs):
-    qs = models.MenuItem.objects.filter(level=0)
-    return Prefetch(
-        "items", queryset=gql_optimizer.query(qs, info), to_attr="prefetched_items"
-    )
-
-
-class Menu(CountableDjangoObjectType):
-    items = gql_optimizer.field(
-        graphene.List(lambda: MenuItem), prefetch_related=prefetch_menus
-    )
+class Menu(ChannelContextTypeWithMetadata, CountableDjangoObjectType):
+    items = graphene.List(lambda: MenuItem)
 
     class Meta:
-        description = """Represents a single menu - an object that is used
-               to help navigate through the store."""
-        interfaces = [relay.Node]
-        only_fields = ["id", "name"]
+        default_resolver = ChannelContextType.resolver_with_context
+        description = (
+            "Represents a single menu - an object that is used to help navigate "
+            "through the store."
+        )
+        interfaces = [relay.Node, ObjectWithMetadata]
+        only_fields = ["id", "name", "slug"]
         model = models.Menu
 
     @staticmethod
-    def resolve_items(root: models.Menu, _info, **_kwargs):
-        if hasattr(root, "prefetched_items"):
-            return root.prefetched_items
-        return root.items.filter(level=0)
+    @traced_resolver
+    def resolve_items(root: ChannelContext[models.Menu], info, **_kwargs):
+        menu_items = MenuItemsByParentMenuLoader(info.context).load(root.node.id)
+        return menu_items.then(
+            lambda menu_items: [
+                ChannelContext(node=menu_item, channel_slug=root.channel_slug)
+                for menu_item in menu_items
+            ]
+        )
 
 
-class MenuItem(CountableDjangoObjectType):
-    children = gql_optimizer.field(
-        graphene.List(lambda: MenuItem), model_field="children"
-    )
+class MenuItem(ChannelContextTypeWithMetadata, CountableDjangoObjectType):
+    children = graphene.List(lambda: MenuItem)
     url = graphene.String(description="URL to the menu item.")
-    translation = graphene.Field(
+    translation = TranslationField(
         MenuItemTranslation,
-        language_code=graphene.Argument(
-            LanguageCodeEnum,
-            description="A language code to return the translation for.",
-            required=True,
-        ),
-        description=(
-            "Returns translated Menu item fields " "for the given language code."
-        ),
-        resolver=resolve_translation,
+        type_name="menu item",
+        resolver=ChannelContextType.resolve_translation,
     )
 
     class Meta:
-        description = """Represents a single item of the related menu.
-        Can store categories, collection or pages."""
-        interfaces = [relay.Node]
+        default_resolver = ChannelContextType.resolver_with_context
+
+        description = (
+            "Represents a single item of the related menu. Can store categories, "
+            "collection or pages."
+        )
+        interfaces = [relay.Node, ObjectWithMetadata]
         only_fields = [
             "category",
             "collection",
@@ -67,13 +81,122 @@ class MenuItem(CountableDjangoObjectType):
             "name",
             "page",
             "parent",
-            "sort_order",
         ]
         model = models.MenuItem
 
     @staticmethod
-    def resolve_children(root: models.MenuItem, _info, **_kwargs):
-        return root.children.all()
+    @traced_resolver
+    def resolve_category(root: ChannelContext[models.MenuItem], info, **_kwargs):
+        if root.node.category_id:
+            return CategoryByIdLoader(info.context).load(root.node.category_id)
+        return None
+
+    @staticmethod
+    @traced_resolver
+    def resolve_children(root: ChannelContext[models.MenuItem], info, **_kwargs):
+        menus = MenuItemChildrenLoader(info.context).load(root.node.id)
+        return menus.then(
+            lambda menus: [
+                ChannelContext(node=menu, channel_slug=root.channel_slug)
+                for menu in menus
+            ]
+        )
+
+    @staticmethod
+    @traced_resolver
+    def resolve_collection(root: ChannelContext[models.MenuItem], info, **_kwargs):
+        if not root.node.collection_id:
+            return None
+
+        requestor = get_user_or_app_from_context(info.context)
+        is_staff = requestor_is_staff_member_or_app(requestor)
+        if is_staff:
+            return (
+                CollectionByIdLoader(info.context)
+                .load(root.node.collection_id)
+                .then(
+                    lambda collection: ChannelContext(
+                        node=collection, channel_slug=root.channel_slug
+                    )
+                    if collection
+                    else None
+                )
+            )
+
+        # If it's a non-staff user with proper permission we should check that
+        # channel is active and collection is visible in this channel
+        channel_slug = str(root.channel_slug)
+        channel = ChannelBySlugLoader(info.context).load(channel_slug)
+
+        def calculate_collection_availability(collection_channel_listing):
+            def calculate_collection_availability_with_channel(channel):
+                if not channel:
+                    return None
+                collection_is_visible = (
+                    collection_channel_listing.is_visible
+                    if collection_channel_listing
+                    else False
+                )
+                if not channel.is_active or not collection_is_visible:
+                    return None
+                return (
+                    CollectionByIdLoader(info.context)
+                    .load(root.node.collection_id)
+                    .then(
+                        lambda collection: ChannelContext(
+                            node=collection, channel_slug=channel_slug
+                        )
+                        if collection
+                        else None
+                    )
+                )
+
+            return channel.then(calculate_collection_availability_with_channel)
+
+        return (
+            CollectionChannelListingByCollectionIdAndChannelSlugLoader(info.context)
+            .load((root.node.collection_id, channel_slug))
+            .then(calculate_collection_availability)
+        )
+
+    @staticmethod
+    @traced_resolver
+    def resolve_menu(root: ChannelContext[models.MenuItem], info, **_kwargs):
+        if root.node.menu_id:
+            menu = MenuByIdLoader(info.context).load(root.node.menu_id)
+            return menu.then(
+                lambda menu: ChannelContext(node=menu, channel_slug=root.channel_slug)
+            )
+        return None
+
+    @staticmethod
+    @traced_resolver
+    def resolve_parent(root: ChannelContext[models.MenuItem], info, **_kwargs):
+        if root.node.parent_id:
+            menu = MenuItemByIdLoader(info.context).load(root.node.parent_id)
+            return menu.then(
+                lambda menu: ChannelContext(node=menu, channel_slug=root.channel_slug)
+            )
+        return None
+
+    @staticmethod
+    @traced_resolver
+    def resolve_page(root: ChannelContext[models.MenuItem], info, **kwargs):
+        if root.node.page_id:
+            requestor = get_user_or_app_from_context(info.context)
+            requestor_has_access_to_all = requestor.is_active and requestor.has_perm(
+                PagePermissions.MANAGE_PAGES
+            )
+            return (
+                PageByIdLoader(info.context)
+                .load(root.node.page_id)
+                .then(
+                    lambda page: page
+                    if requestor_has_access_to_all or page.is_visible
+                    else None
+                )
+            )
+        return None
 
 
 class MenuItemMoveInput(graphene.InputObjectType):
@@ -82,5 +205,9 @@ class MenuItemMoveInput(graphene.InputObjectType):
         description="ID of the parent menu. If empty, menu will be top level menu."
     )
     sort_order = graphene.Int(
-        description="Sorting position of the menu item (from 0 to x)."
+        description=(
+            "The new relative sorting position of the item (from -inf to +inf). "
+            "1 moves the item one position forward, -1 moves the item one position "
+            "backward, 0 leaves the item unchanged."
+        )
     )

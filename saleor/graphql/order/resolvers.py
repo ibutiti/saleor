@@ -1,57 +1,51 @@
 import graphene
-import graphene_django_optimizer as gql_optimizer
 
+from ...channel.models import Channel
+from ...core.tracing import traced_resolver
 from ...order import OrderStatus, models
 from ...order.events import OrderEvents
 from ...order.models import OrderEvent
 from ...order.utils import sum_order_totals
-from ..utils import filter_by_period, filter_by_query_param
-from .enums import OrderStatusFilter
+from ..channel.utils import get_default_channel_slug_or_graphql_error
+from ..utils.filters import filter_by_period
 from .types import Order
 
 ORDER_SEARCH_FIELDS = ("id", "discount_name", "token", "user_email", "user__email")
 
 
-def filter_orders(qs, info, created, status, query):
-    qs = filter_by_query_param(qs, query, ORDER_SEARCH_FIELDS)
-
-    # filter orders by status
-    if status is not None:
-        if status == OrderStatusFilter.READY_TO_FULFILL:
-            qs = qs.ready_to_fulfill()
-        elif status == OrderStatusFilter.READY_TO_CAPTURE:
-            qs = qs.ready_to_capture()
-
-    # filter orders by creation date
-    if created is not None:
-        qs = filter_by_period(qs, created, "created")
-
-    return gql_optimizer.query(qs, info)
+@traced_resolver
+def resolve_orders(_info, channel_slug, **_kwargs):
+    qs = models.Order.objects.non_draft()
+    if channel_slug:
+        qs = qs.filter(channel__slug=str(channel_slug))
+    return qs
 
 
-def resolve_orders(info, created, status, query):
-    qs = models.Order.objects.confirmed()
-    return filter_orders(qs, info, created, status, query)
-
-
-def resolve_draft_orders(info, created, query):
+@traced_resolver
+def resolve_draft_orders(_info, **_kwargs):
     qs = models.Order.objects.drafts()
-    return filter_orders(qs, info, created, None, query)
+    return qs
 
 
-def resolve_orders_total(_info, period):
-    qs = models.Order.objects.confirmed().exclude(status=OrderStatus.CANCELED)
+@traced_resolver
+def resolve_orders_total(_info, period, channel_slug):
+    if channel_slug is None:
+        channel_slug = get_default_channel_slug_or_graphql_error()
+    channel = Channel.objects.filter(slug=str(channel_slug)).first()
+    if not channel:
+        return None
+    qs = (
+        models.Order.objects.non_draft()
+        .exclude(status=OrderStatus.CANCELED)
+        .filter(channel__slug=str(channel_slug))
+    )
     qs = filter_by_period(qs, period, "created")
-    return sum_order_totals(qs)
+    return sum_order_totals(qs, channel.currency_code)
 
 
+@traced_resolver
 def resolve_order(info, order_id):
-    """Return order only for user assigned to it or proper staff user."""
-    user = info.context.user
-    order = graphene.Node.get_node_from_global_id(info, order_id, Order)
-    if user.has_perm("order.manage_orders") or order.user == user:
-        return order
-    return None
+    return graphene.Node.get_node_from_global_id(info, order_id, Order)
 
 
 def resolve_homepage_events():
@@ -65,4 +59,8 @@ def resolve_homepage_events():
 
 
 def resolve_order_by_token(token):
-    return models.Order.objects.filter(token=token).first()
+    return (
+        models.Order.objects.exclude(status=OrderStatus.DRAFT)
+        .filter(token=token)
+        .first()
+    )

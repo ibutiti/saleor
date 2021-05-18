@@ -1,64 +1,91 @@
+from typing import TYPE_CHECKING, List, Union
+
 from django.conf import settings
-from django.contrib.postgres.fields import JSONField
 from django.db import models
-from django.utils.safestring import mark_safe
-from django.utils.translation import pgettext_lazy
+from django.db.models import OuterRef, Q, Subquery
 from django_countries.fields import CountryField
 from django_measurement.models import MeasurementField
 from django_prices.models import MoneyField
 from measurement.measures import Weight
-from prices import MoneyRange
+from prices import Money
 
-from ..core.utils import format_money
-from ..core.utils.json_serializer import CustomJsonEncoder
+from ..channel.models import Channel
+from ..core.db.fields import SanitizedJSONField
+from ..core.models import ModelWithMetadata
+from ..core.permissions import ShippingPermissions
+from ..core.units import WeightUnits
+from ..core.utils.editorjs import clean_editor_js
 from ..core.utils.translations import TranslationProxy
-from ..core.weight import WeightUnits, zero_weight
-from . import ShippingMethodType
-from .utils import (
-    applicable_price_based_methods,
-    applicable_weight_based_methods,
-    get_price_type_display,
-    get_weight_type_display,
-)
+from ..core.weight import convert_weight, get_default_weight_unit, zero_weight
+from . import PostalCodeRuleInclusionType, ShippingMethodType
+from .postal_codes import filter_shipping_methods_by_postal_code_rules
+
+if TYPE_CHECKING:
+    # flake8: noqa
+    from ..checkout.models import Checkout
+    from ..order.models import Order
 
 
-class ShippingZone(models.Model):
+def _applicable_weight_based_methods(weight, qs):
+    """Return weight based shipping methods that are applicable for the total weight."""
+    qs = qs.weight_based()
+    min_weight_matched = Q(minimum_order_weight__lte=weight) | Q(
+        minimum_order_weight__isnull=True
+    )
+    max_weight_matched = Q(maximum_order_weight__gte=weight) | Q(
+        maximum_order_weight__isnull=True
+    )
+    return qs.filter(min_weight_matched & max_weight_matched)
+
+
+def _applicable_price_based_methods(price: Money, qs, channel_id):
+    """Return price based shipping methods that are applicable for the given total."""
+    qs_shipping_method = qs.price_based()
+
+    price_based = Q(shipping_method_id__in=qs_shipping_method)
+    channel_filter = Q(channel_id=channel_id)
+    min_price_matched = Q(minimum_order_price_amount__lte=price.amount)
+    no_price_limit = Q(maximum_order_price_amount__isnull=True)
+    max_price_matched = Q(maximum_order_price_amount__gte=price.amount)
+
+    applicable_price_based_methods = ShippingMethodChannelListing.objects.filter(
+        channel_filter
+        & price_based
+        & min_price_matched
+        & (no_price_limit | max_price_matched)
+    ).values_list("shipping_method__id", flat=True)
+    return qs_shipping_method.filter(id__in=applicable_price_based_methods)
+
+
+def _get_weight_type_display(min_weight, max_weight):
+    default_unit = get_default_weight_unit()
+
+    if min_weight.unit != default_unit:
+        min_weight = convert_weight(min_weight, default_unit)
+    if max_weight and max_weight.unit != default_unit:
+        max_weight = convert_weight(max_weight, default_unit)
+
+    if max_weight is None:
+        return ("%(min_weight)s and up" % {"min_weight": min_weight},)
+    return "%(min_weight)s to %(max_weight)s" % {
+        "min_weight": min_weight,
+        "max_weight": max_weight,
+    }
+
+
+class ShippingZone(ModelWithMetadata):
     name = models.CharField(max_length=100)
     countries = CountryField(multiple=True, default=[], blank=True)
     default = models.BooleanField(default=False)
+    description = models.TextField(blank=True)
+    channels = models.ManyToManyField(Channel, related_name="shipping_zones")
 
     def __str__(self):
         return self.name
 
-    def countries_display(self):
-        countries = self.countries
-        if self.default:
-            from ..dashboard.shipping.forms import get_available_countries
-
-            countries = get_available_countries()
-        if countries and len(countries) <= 3:
-            return ", ".join((country.name for country in countries))
-        return pgettext_lazy(
-            "Number of countries shipping zone apply to",
-            "%(num_of_countries)d countries" % {"num_of_countries": len(countries)},
-        )
-
-    @property
-    def price_range(self):
-        prices = [
-            shipping_method.get_total()
-            for shipping_method in self.shipping_methods.all()
-        ]
-        if prices:
-            return MoneyRange(min(prices), max(prices))
-        return None
-
-    class Meta:
+    class Meta(ModelWithMetadata.Meta):
         permissions = (
-            (
-                "manage_shipping",
-                pgettext_lazy("Permission description", "Manage shipping."),
-            ),
+            (ShippingPermissions.MANAGE_SHIPPING.codename, "Manage shipping."),
         )
 
 
@@ -69,70 +96,118 @@ class ShippingMethodQueryset(models.QuerySet):
     def weight_based(self):
         return self.filter(type=ShippingMethodType.WEIGHT_BASED)
 
-    def applicable_shipping_methods(self, price, weight, country_code):
-        """Returns ShippingMethods that can be used on an order with
-        shipment to given country(code), that are applicable to given
-        price & weight total.
+    def for_channel(self, channel_slug: str):
+        return self.filter(
+            shipping_zone__channels__slug=channel_slug,
+            channel_listings__channel__slug=channel_slug,
+        )
+
+    @staticmethod
+    def applicable_shipping_methods_by_channel(shipping_methods, channel_id):
+        query = ShippingMethodChannelListing.objects.filter(
+            shipping_method=OuterRef("pk"), channel_id=channel_id
+        ).values_list("price_amount")
+        return shipping_methods.annotate(price_amount=Subquery(query)).order_by(
+            "price_amount"
+        )
+
+    def exclude_shipping_methods_for_excluded_products(
+        self, qs, product_ids: List[int]
+    ):
+        """Exclude the ShippingMethods which have excluded given products."""
+        return qs.exclude(excluded_products__id__in=product_ids)
+
+    def applicable_shipping_methods(
+        self, price: Money, channel_id, weight, country_code, product_ids=None
+    ):
+        """Return the ShippingMethods that can be used on an order with shipment.
+
+        It is based on the given country code, and by shipping methods that are
+        applicable to the given price, weight and products.
         """
-        # If dedicated shipping zone for the country exists, we should use it
-        # in the first place
         qs = self.filter(
             shipping_zone__countries__contains=country_code,
-            shipping_zone__default=False,
+            shipping_zone__channels__id=channel_id,
+            channel_listings__currency=price.currency,
+            channel_listings__channel_id=channel_id,
         )
-        if not qs.exists():
-            # Otherwise default shipping zone should be used
-            qs = self.filter(shipping_zone__default=True)
+        qs = self.applicable_shipping_methods_by_channel(qs, channel_id)
+        qs = qs.prefetch_related("shipping_zone")
 
-        qs = qs.prefetch_related("shipping_zone").order_by("price")
-        price_based_methods = applicable_price_based_methods(price, qs)
-        weight_based_methods = applicable_weight_based_methods(weight, qs)
-        return price_based_methods | weight_based_methods
+        # Products IDs are used to exclude shipping methods that may be not applicable
+        # to some of these products, based on exclusion rules defined in shipping method
+        # instances.
+        if product_ids:
+            qs = self.exclude_shipping_methods_for_excluded_products(qs, product_ids)
+
+        price_based_methods = _applicable_price_based_methods(price, qs, channel_id)
+        weight_based_methods = _applicable_weight_based_methods(weight, qs)
+        shipping_methods = price_based_methods | weight_based_methods
+
+        return shipping_methods
+
+    def applicable_shipping_methods_for_instance(
+        self,
+        instance: Union["Checkout", "Order"],
+        channel_id,
+        price: Money,
+        country_code=None,
+        lines=None,
+    ):
+        if not instance.shipping_address:
+            return None
+        if not country_code:
+            # TODO: country_code should come from argument
+            country_code = instance.shipping_address.country.code  # type: ignore
+        if lines is None:
+            # TODO: lines should comes from args in get_valid_shipping_methods_for_order
+            lines = instance.lines.prefetch_related("variant__product").all()
+            instance_product_ids = set(lines.values_list("variant__product", flat=True))
+        else:
+            instance_product_ids = {line.product.id for line in lines}
+        applicable_methods = self.applicable_shipping_methods(
+            price=price,
+            channel_id=channel_id,
+            weight=instance.get_total_weight(lines),
+            country_code=country_code or instance.shipping_address.country.code,
+            product_ids=instance_product_ids,
+        ).prefetch_related("postal_code_rules")
+
+        return filter_shipping_methods_by_postal_code_rules(
+            applicable_methods, instance.shipping_address
+        )
 
 
-class ShippingMethod(models.Model):
+class ShippingMethod(ModelWithMetadata):
     name = models.CharField(max_length=100)
     type = models.CharField(max_length=30, choices=ShippingMethodType.CHOICES)
-    price = MoneyField(
-        currency=settings.DEFAULT_CURRENCY,
-        max_digits=settings.DEFAULT_MAX_DIGITS,
-        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
-        default=0,
-    )
     shipping_zone = models.ForeignKey(
         ShippingZone, related_name="shipping_methods", on_delete=models.CASCADE
     )
-    minimum_order_price = MoneyField(
-        currency=settings.DEFAULT_CURRENCY,
-        max_digits=settings.DEFAULT_MAX_DIGITS,
-        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
-        default=0,
-        blank=True,
-        null=True,
-    )
-    maximum_order_price = MoneyField(
-        currency=settings.DEFAULT_CURRENCY,
-        max_digits=settings.DEFAULT_MAX_DIGITS,
-        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
-        blank=True,
-        null=True,
-    )
     minimum_order_weight = MeasurementField(
         measurement=Weight,
-        unit_choices=WeightUnits.CHOICES,
+        unit_choices=WeightUnits.CHOICES,  # type: ignore
         default=zero_weight,
         blank=True,
         null=True,
     )
     maximum_order_weight = MeasurementField(
-        measurement=Weight, unit_choices=WeightUnits.CHOICES, blank=True, null=True
+        measurement=Weight,
+        unit_choices=WeightUnits.CHOICES,  # type: ignore
+        blank=True,
+        null=True,
     )
-    meta = JSONField(blank=True, default=dict, encoder=CustomJsonEncoder)
+    excluded_products = models.ManyToManyField(
+        "product.Product", blank=True
+    )  # type: ignore
+    maximum_delivery_days = models.PositiveIntegerField(null=True, blank=True)
+    minimum_delivery_days = models.PositiveIntegerField(null=True, blank=True)
+    description = SanitizedJSONField(blank=True, null=True, sanitizer=clean_editor_js)
 
     objects = ShippingMethodQueryset.as_manager()
     translated = TranslationProxy()
 
-    class Meta:
+    class Meta(ModelWithMetadata.Meta):
         ordering = ("pk",)
 
     def __str__(self):
@@ -140,44 +215,81 @@ class ShippingMethod(models.Model):
 
     def __repr__(self):
         if self.type == ShippingMethodType.PRICE_BASED:
-            minimum = "%s%s" % (
-                self.minimum_order_price.amount,
-                self.minimum_order_price.currency,
-            )
-            max_price = self.maximum_order_price
-            maximum = (
-                "%s%s" % (max_price.amount, max_price.currency)
-                if max_price
-                else "no limit"
-            )
-            return "ShippingMethod(type=%s min=%s, max=%s)" % (
-                self.type,
-                minimum,
-                maximum,
-            )
+            return "ShippingMethod(type=%s)" % (self.type,)
         return "ShippingMethod(type=%s weight_range=(%s)" % (
             self.type,
-            get_weight_type_display(
+            _get_weight_type_display(
                 self.minimum_order_weight, self.maximum_order_weight
             ),
         )
 
+
+class ShippingMethodPostalCodeRule(models.Model):
+    shipping_method = models.ForeignKey(
+        ShippingMethod, on_delete=models.CASCADE, related_name="postal_code_rules"
+    )
+    start = models.CharField(max_length=32)
+    end = models.CharField(max_length=32, blank=True, null=True)
+    inclusion_type = models.CharField(
+        max_length=32,
+        choices=PostalCodeRuleInclusionType.CHOICES,
+        default=PostalCodeRuleInclusionType.EXCLUDE,
+    )
+
+    class Meta:
+        unique_together = ("shipping_method", "start", "end")
+
+
+class ShippingMethodChannelListing(models.Model):
+    shipping_method = models.ForeignKey(
+        ShippingMethod,
+        null=False,
+        blank=False,
+        related_name="channel_listings",
+        on_delete=models.CASCADE,
+    )
+    channel = models.ForeignKey(
+        Channel,
+        null=False,
+        blank=False,
+        related_name="shipping_method_listings",
+        on_delete=models.CASCADE,
+    )
+    minimum_order_price_amount = models.DecimalField(
+        max_digits=settings.DEFAULT_MAX_DIGITS,
+        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
+        default=0,
+        blank=True,
+        null=True,
+    )
+    minimum_order_price = MoneyField(
+        amount_field="minimum_order_price_amount", currency_field="currency"
+    )
+    currency = models.CharField(
+        max_length=settings.DEFAULT_CURRENCY_CODE_LENGTH,
+    )
+    maximum_order_price_amount = models.DecimalField(
+        max_digits=settings.DEFAULT_MAX_DIGITS,
+        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
+        blank=True,
+        null=True,
+    )
+    maximum_order_price = MoneyField(
+        amount_field="maximum_order_price_amount", currency_field="currency"
+    )
+    price = MoneyField(amount_field="price_amount", currency_field="currency")
+    price_amount = models.DecimalField(
+        max_digits=settings.DEFAULT_MAX_DIGITS,
+        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
+        default=0,
+    )
+
     def get_total(self):
         return self.price
 
-    def get_ajax_label(self):
-        price_html = format_money(self.price)
-        label = mark_safe("%s %s" % (self, price_html))
-        return label
-
-    def get_type_display(self):
-        if self.type == ShippingMethodType.PRICE_BASED:
-            return get_price_type_display(
-                self.minimum_order_price, self.maximum_order_price
-            )
-        return get_weight_type_display(
-            self.minimum_order_weight, self.maximum_order_weight
-        )
+    class Meta:
+        unique_together = [["shipping_method", "channel"]]
+        ordering = ("pk",)
 
 
 class ShippingMethodTranslation(models.Model):
@@ -186,6 +298,7 @@ class ShippingMethodTranslation(models.Model):
     shipping_method = models.ForeignKey(
         ShippingMethod, related_name="translations", on_delete=models.CASCADE
     )
+    description = SanitizedJSONField(blank=True, null=True, sanitizer=clean_editor_js)
 
     class Meta:
         unique_together = (("language_code", "shipping_method"),)

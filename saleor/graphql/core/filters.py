@@ -1,11 +1,14 @@
 import django_filters
 from django.core.exceptions import ValidationError
-from django.utils.translation import ugettext_lazy as _
 from django_filters.fields import MultipleChoiceField
+
+from ..utils.filters import filter_range_field
+from .enums import JobStatusEnum
+from .types.common import DateTimeRangeInput
 
 
 class DefaultMultipleChoiceField(MultipleChoiceField):
-    default_error_messages = {"invalid_list": _("Enter a list of values.")}
+    default_error_messages = {"invalid_list": "Enter a list of values."}
 
     def to_python(self, value):
         if not value:
@@ -26,8 +29,10 @@ class DefaultMultipleChoiceField(MultipleChoiceField):
 
 
 class EnumFilter(django_filters.CharFilter):
-    """ Filter class for graphene enum object.
-    enum_class needs to be passed explicitly  as well as the method."""
+    """Filter class for Graphene enum object.
+
+    enum_class needs to be passed explicitly as well as the method.
+    """
 
     def __init__(self, input_class, *args, **kwargs):
         assert kwargs.get(
@@ -49,3 +54,47 @@ class ObjectTypeFilter(django_filters.Filter):
     def __init__(self, input_class, *args, **kwargs):
         self.input_class = input_class
         super().__init__(*args, **kwargs)
+
+
+def filter_created_at(qs, _, value):
+    return filter_range_field(qs, "created_at", value)
+
+
+def filter_updated_at(qs, _, value):
+    return filter_range_field(qs, "updated_at", value)
+
+
+def filter_status(qs, _, value):
+    if not value:
+        return qs
+    return qs.filter(status=value)
+
+
+def filter_metadata(qs, _, value):
+    for metadata_item in value:
+        qs = qs.filter(metadata__contains={metadata_item.key: metadata_item.value})
+
+    return qs
+
+
+class BaseJobFilter(django_filters.FilterSet):
+    created_at = ObjectTypeFilter(
+        input_class=DateTimeRangeInput, method=filter_created_at
+    )
+    updated_at = ObjectTypeFilter(
+        input_class=DateTimeRangeInput, method=filter_updated_at
+    )
+    status = EnumFilter(input_class=JobStatusEnum, method=filter_status)
+
+
+class MetadataFilter(ListObjectTypeFilter):
+    def __init__(self, *args, **kwargs):
+        input_class = "saleor.graphql.meta.mutations.MetadataInput"
+        super().__init__(input_class, method=filter_metadata, *args, **kwargs)
+
+
+class MetadataFilterBase(django_filters.FilterSet):
+    metadata = MetadataFilter()
+
+    class Meta:
+        abstract = True

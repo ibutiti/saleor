@@ -3,22 +3,576 @@
 All notable, unreleased changes to this project will be documented in this file. For the released changes, please visit the [Releases](https://github.com/mirumee/saleor/releases) page.
 
 ## [Unreleased]
+- Add query contains only schema validation - #6827 by @fowczarek
+- Add introspection caching - #6871 by @fowczarek
+- Refactor plugins manager(add missing tracing, optimize imports, drop plugins manager from settings) - #6890 by @fowczarek
+- Add CUSTOMER_UPDATED webhook, add addresses field to customer CUSTOMER_CREATED webhook - #6898 by @piotrgrundas
+- Add missing span in PluginManager - #6900 by @fowczarek
+- Fix Sentry reporting - #6902 by @fowczarek
+- Fix removing page types in cleardb command - #6918 by @fowczarek
+- Add possibility to apply discount to order/order line with status `DRAFT` - #6930 by @korycins
+- Deprecate API fields `Order.discount`, `Order.discountName`, `Order.translatedDiscountName` - #6874 by @korycins
+- Fix argument validation in page resolver - #6960 by @fowczarek
+- Drop `data` field from checkout line model - #6961 by @fowczarek
+- Add `PRODUCT_VARIANT_CREATED`, `PRODUCT_VARIANT_UPDATED`, `PRODUCT_VARIANT_DELETED` webhooks, fix attributes field for `PRODUCT_CREATED`, `PRODUCT_UPDATED` webhooks - #6963 by @piotrgrundas
+- Fix `totalCount` on connection resolver without `first` or `last` - #6975 by @fowczarek
+- Fix variant resolver on `DigitalContent` - #6983 by @fowczarek
+- Fix race condition on `send_fulfillment-confirmation` - #6988 by @fowczarek
+- Fix resolver by id and slug for product and product variant - #6985 by @d-wysocki
+- Add optional support for reporting resource limits via a stub field in `shop` - #6967 by @NyanKiyoshi
+- Allow to use `Bearer` as an authorization prefix - #6996 by @korycins
+- Update checkout quantity when checkout lines are deleted - #7002 by @IKarbowiak
+- Raise an error when the user is trying to sort products by rank without search - #7013 by @IKarbowiak
+- Fix available shipping methods - return also weight methods without weight limits - #7021 by @IKarbowiak
+- Remove redundant Opentracing spans - #6994 by @fowczarek
+- Trigger `PRODUCT_UPDATED` webhook for collections and categories mutations - #7051 by @d-wysocki
+- Support setting value for AttributeValue mutations - #7037 by @piotrgrundas
+- Validate discount value for percentage vouchers and sales - #7033 by @d-wysocki
+- Optimize children field on Category type - #7045 by @IKarbowiak
+- Added support for querying objects by metadata fields - #6683 by @LeOndaz
+- Add rich text attribute input - #7059 by @piotrgrundas
+- Avoid using `get_plugins_manager` method - #7052 by @IKarbowiak
+- Add field `languageCode` to types: `AccountInput`, `AccountRegisterInput`, `CheckoutCreateInput`, `CustomerInput`, `Order`, `User`. Add field `languageCodeEnum` to `Order` type. Add new mutation `CheckoutLanguageCodeUpdate`. Deprecate field `Order.languageCode`.  - #6609 by @korycins
+- Add benchmarks for triggered product and variants webhooks - #7061 by @d-wysocki
+- Extend `Transaction` type with gateway response and `Payment` type with filter - #7062 by @IKarbowiak
+- Fix invalid tax rates for lines - #7058 by @IKarbowiak
+- Allow seeing unconfirmed orders - #7072 by @IKarbowiak
+- Raise GraphQLError when too big integer value is provided - #7076 by @IKarbowiak
+- Do not update draft order addresses when user is changing - #7088 by @IKarbowiak
+- Recalculate draft order when product/variant was deleted - #7085 by @d-wysocki
+- Added validation for `DraftOrderCreate` with negative quantity line - #7085 by @d-wysocki
+- Remove html tags from product description_plaintext - #7094 by @d-wysocki
+- Performance upgrade on orders query with shipping and billing addresses - #7083 by @tomaszszymanski129
+- Performance upgrade on orders query with payment status - #7125 by @tomaszszymanski129
+- Performance upgrade on orders query with events - #7120 by @tomaszszymanski129
+- Performance upgrade on orders query with `user` and `userEmail` fields - #7091 by @tomaszszymanski129
+- Fix dataloader for fetching checkout info - #7084 by @IKarbowiak
+- Update also draft order line total price after getting the unit price from plugin - #7080 by @IKarbowiak
+- Fix failing product tasks when instances are removed - #7092 by @IKarbowiak
+- Catch invalid object ID and raise ValidationError - #7114 by @d-wysocki
+- Update GraphQL endpoint to only match exactly `/graphql/` without trailing characters - #7117 by @IKarbowiak
+- Introduce traced_resolver decorator instead of graphene middleware - #7159 by @tomaszszymanski129
+- Fix failing export when exporting attribute without values - #7131 by @IKarbowiak
+- Extend Vatlayer functionalities - #7101 by @korycins:
+    - Allow users to enter a list of exceptions (country ISO codes) that will use the source country rather than the destination country for tax purposes.
+    - Allow users to enter a list of countries for which no VAT will be added.
+- Allow passing metadata to `accountRegister` mutation - #7152 by @piotrgrundas
+- Fix incorrect payment data for klarna - #7150 by @IKarbowiak
+- Drop deleted images from storage - #7129 by @IKarbowiak
+- Fix core sorting on related fields - #7195 by @tomaszszymanski129
+- Fix variants dataloaders when querying with default channel - #7206 by @tomaszszymanski129
+- Performance upgrade on orders query with `subtotal` field - #7174 by @tomaszszymanski129
+- Performance upgrade on orders query with `actions` field - #7175 by @tomaszszymanski129
+- Performance upgrade on orders query with `totalAuthorized` field - #7170 by @tomaszszymanski129
+- Fix export with empty assignment values - #7207 by @IKarbowiak
+- Change exported file name - #7218 by @IKarbowiak
+- Performance upgrade on `OrderLine` type with `thumbnail` field - #7224 by @tomaszszymanski129
+- Use GraphQL IDs instead of database IDs in export - #7240 by @IKarbowiak
+- Fix draft order tax mismatch - #7226 by @IKarbowiak
+  - Introduce `calculate_order_line_total` plugin method
+- Raise ValidationError when refund cannot be performed - #7260 by @IKarbowiak
+- Extend order with origin and original order values - #7326 by @IKarbowiak
+- Fix customer addresses missing after customer creation - #7327 by @tomaszszymanski129
+- Extend order payload with undiscounted prices and add psp_reference to payment model - #7339 by @IKarbowiak
+  - order payload extended with the following fields:
+    - `undiscounted_total_net_amount`
+    - `undiscounted_total_gross_amount`
+    - `psp_reference` on `payment`
+  - order lines extended with:
+    - `undiscounted_unit_price_net_amount`
+    - `undiscounted_unit_price_gross_amount`
+    - `undiscounted_total_price_net_amount`
+    - `undiscounted_total_price_gross_amount`
+- Copy metadata fields when creating reissue - #7358 by @IKarbowiak
 
-- Fixed internal error when creating a checkout with a voucher code - #4292 by @NyanKiyoshi
-- Add filter tab name as required - #4269 by @benekex2
-- A few unused panels are now disabled by default from the debug toolbar; this should improve loading time when debugging - #4301 by @NyanKiyoshi
-- Fixed internal error when adding a note to an anonymous order - #4319 by @NyanKiyoshi
-- Fix populatedb gift card duplication error - #4336 by @fowczarek
-- Fix voucher apply once per order - #4339 by @fowczarek
-- Change type of start and end date for discounts on date time field - #4293 by @fowczarek
-- Add SPECIFIC_PRODUCT type to VoucherTypes - #4344 by @fowczarek
+### Breaking
+- Multichannel MVP: Multicurrency - #6242 by @fowczarek @d-wysocki
+- Drop deprecated meta mutations - #6422 by @maarcingebala
+- Drop deprecated service accounts and webhooks API - #6431 by @maarcingebala
+- Drop deprecated fields from the `ProductVariant` type: `quantity`, `quantityAllocated`, `stockQuantity`, `isAvailable` - #6436 by @maarcingebala
+- Drop authorization keys API - #6631 by @maarcingebala
+- Drop `type` field from `AttributeValue` type - #6710 by @IKarbowiak
+- Drop `apply_taxes_to_shipping_price_range` plugin hook - #6746 by @maarcingebala
+- Drop `CHECKOUT_QUANTITY_CHANGED` webhook - #6797 by @d-wysocki
+- Drop deprecated `taxRate` field from `ProductType` - #6795 by @d-wysocki
+- Unconfirmed order manipulation - #6829 by @tomaszszymanski129
+  - Remove mutations for draft order lines manipulation: `draftOrderLinesCreate`, `draftOrderLineDelete`, `draftOrderLineUpdate`
+  - Use `orderLinesCreate`, `orderLineDelete`, `orderLineUpdate` mutations instead.
+  - Order events enums `DRAFT_ADDED_PRODUCTS` and `DRAFT_REMOVED_PRODUCTS` are now `ADDED_PRODUCTS` and `REMOVED_PRODUCTS`
+- Email interface as a plugin - #6301 by @korycins
+- Remove resolving user's location from GeoIP; drop `PaymentInput.billingAddress` input field - #6784 by @maarcingebala
+- Change the payload of the order webhook to handle discounts list, added fields: `Order.discounts`,
+`OrderLine.unit_discount_amount`,`OrderLine.unit_discount_type`, `OrderLine.unit_discount_reason` , remove fields:
+`Order.discount_amount`, `Order.discount_name`, `Order.translated_discount_name`- #6874 by @korycins
+- Update checkout performance - introduce `CheckoutInfo` data class - #6958 by @IKarbowiak; Introduced changes in plugin methods definitions:
+  - in the following methods, the `checkout` parameter changed to `checkout_info`:
+    - `calculate_checkout_total`
+    - `calculate_checkout_subtotal`
+    - `calculate_checkout_shipping`
+    - `get_checkout_shipping_tax_rate`
+    - `calculate_checkout_line_total`
+    - `calculate_checkout_line_unit_price`
+    - `get_checkout_line_tax_rate`
+    - `preprocess_order_creation`
+  - additionally, `preprocess_order_creation` was extend with `lines_info` parameter
+- Fix Avalara caching - #7036 by @fowczarek;
+ - Introduced changes in plugin methods definitions:
+    - `calculate_checkout_line_total`  was extended with `lines` parameter
+    - `calculate_checkout_line_unit_price`  was extended with `lines` parameter
+    - `get_checkout_line_tax_rate`  was extended with `lines` parameter
+  To get proper taxes we should always send the whole checkout to Avalara.
+- Remove triggering a webhook event `PRODUCT_UPDATED`  when calling `ProductVariantCreate` mutation.  Use `PRODUCT_VARIANT_CREATED` instead - #6963 by @piotrgrundas
+- Remove triggering a webhook event `PRODUCT_UPDATED` when calling  `ProductVariantChannelListingUpdate` mutation. Use `PRODUCT_VARIANT_UPDATED` instead - #6963 by @piotrgrundas
+- Refactor listing payment gateways - #7050 by @maarcingebala. Breaking changes in plugin methods: removed `get_payment_gateway` and `get_payment_gateway_for_checkout`; instead `get_payment_gateways` was added.
+- Change error class in `CollectionBulkDelete` to `CollectionErrors` - #7061 by @d-wysocki
+- Fix doubling price in checkout for products without tax - #7056 by @IKarbowiak
+  - Introduce changes in plugins method:
+    - `calculate_checkout_subtotal` has been dropped from plugins, for correct subtotal calculation, `calculate_checkout_line_total` must be set (manager method for calculating checkout subtotal uses `calculate_checkout_line_total` method)
+- Make `order` property of invoice webhook payload contain order instead of order lines - #7081 by @pdblaszczyk
+  - Affected webhook events: `INVOICE_REQUESTED`, `INVOICE_SENT`, `INVOICE_DELETED`
+- Make quantity field on `StockInput` required - #7082 by @IKarbowiak
+- Extend plugins manager to configure plugins for each plugins - #7198 by @korycins:
+  - Introduce changes in API:
+    - `paymentInitialize` - add `channel` parameter. Optional when only one  channel exists.
+    - `pluginUpdate` - add `channel` parameter.
+    - `availablePaymentGateways` - add `channel` parameter.
+    - `storedPaymentSources` - add `channel` parameter.
+    - `requestPasswordReset` - add `channel` parameter.
+    - `requestEmailChange` - add `channel` parameter.
+    - `confirmEmailChange` - add `channel` parameter.
+    - `accountRequestDeletion` - add `channel` parameter.
+    - change structure of type `Plugin`:
+      - add `globalConfiguration` field for storing configuration when a plugin is globally configured
+      - add `channelConfigurations` field for storing plugin configuration for each channel
+      - removed `configuration` field, use `globalConfiguration` and `channelConfigurations` instead
+    - change structure of input `PluginFilterInput`:
+      - add `statusInChannels` field
+      - add `type` field
+      - removed `active` field. Use `statusInChannels` instead
+  - Change plugin webhook endpoint - #7332 by @korycins.
+    - Use /plugins/channel/<channel_slug>/<plugin_id> for plugins with channel configuration
+    - Use /plugins/global/<plugin_id> for plugins with global configuration
+    - Remove /plugin/<plugin_id> endpoint
+
+- Add description to shipping method - #7116 by @IKarbowiak
+  - `ShippingMethod` was extended with `description` field.
+  - `ShippingPriceInput` was extended with `description` field
+  - Extended `shippingPriceUpdate`, `shippingPriceCreate` mutation to add/edit description
+  - Input field in `shippingPriceTranslate` changed to `ShippingPriceTranslationInput`
+- Drop deprecated queries and mutations - #7199 by @IKarbowiak
+  - drop `url` field from `Category` type
+  - drop `url` field from `Category` type
+  - drop `url` field from `Product` type
+  - drop `localized` fild from `Money` type
+  - drop `permissions` field from `User` type
+  - drop `navigation` field from `Shop` type
+  - drop `isActive` from `AppInput`
+  - drop `value` from `AttributeInput`
+  - drop `customerId` from `checkoutCustomerAttach`
+  - drop `stockAvailability` argument from `products` query
+  - drop `created` and `status` arguments from `orders` query
+  - drop `created` argument from `draftOrders` query
+  - drop `productType` from `ProductFilter`
+  - deprecate mutations' `<name>Errors`, typed `errors` fields and remove deprecation
+- Add channel data to Order webhook - #7299 by @krzysztofwolski
+- Always create new checkout in `checkoutCreate` mutation - #7318 by @IKarbowiak
+  - deprecate `created` return field on `checkoutCreate` mutation
+
+### Other
+
+- Fix creating translations with app - #6804 by @krzysztofwolski
+- Add possibility to provide external payment ID during the conversion draft order to order - #6320 by @korycins
+- Add basic rating for `Products` - #6284 by @korycins
+- Add metadata to shipping zones and shipping methods - #6340 by @maarcingebala
+- Add Page Types - #6261 by @IKarbowiak
+- Migrate draftjs content to editorjs format - #6430 by @IKarbowiak
+- Add editorjs sanitizer - #6456 by @IKarbowiak
+- Add generic FileUpload mutation - #6470 by @IKarbowiak
+- Order confirmation backend - #6498 by @tomaszszymanski129
+- Fix password reset request - #6351 by @Manfred-Madelaine-pro, Ambroise and Pierre
+- Refund products support - #6530 by @korycins
+- Add possibility to exclude products from shipping method - #6506 by @korycins
+- Add availableShippingMethods to the Shop type - #6551 by @IKarbowiak
+- Add delivery time to shipping method - #6564 by @IKarbowiak
+- Introduce file attributes - #6568 by @IKarbowiak
+- Shipping zone description - #6653 by @tomaszszymanski129
+- Add metadata to menu and menu item - #6648 by @tomaszszymanski129
+- Get tax rate from plugins - #6649 by @IKarbowiak
+- Added support for querying user by email - #6632 @LeOndaz
+- Add order shipping tax rate - #6678 by @IKarbowiak
+- Deprecate field `descriptionJSON` from `Product`, `Category`, `Collection` and field `contentJSON` from `Page` - #6692 by @d-wysocki
+- Fix products visibility - #6704 by @IKarbowiak
+- Introduce page reference attributes - #6624 by @IKarbowiak
+- Introduce product reference attributes - #6711 by @IKarbowiak
+- Add metadata to warehouse - #6727 by @d-wysocki
+- Add page webhooks: `PAGE_CREATED`, `PAGE_UPDATED` and `PAGE_DELETED` - #6787 by @d-wysocki
+- Introduce numeric attributes - #6790 by @IKarbowiak
+- Add `PRODUCT_DELETED` webhook - #6794 by @d-wysocki
+- Fix `product_updated` and `product_created` webhooks - #6798 by @d-wysocki
+- Add interface for integrating the auth plugins - #6799 by @korycins
+- Fix page `contentJson` field to return JSON - #6832 by @d-wysocki
+- Add SendgridPlugin - #6793 by @korycins
+- Add SearchRank to search product by name and description. New enum added to `ProductOrderField` - `RANK` - which returns results sorted by search rank - #6872 by @d-wysocki
+- Allocate stocks for order lines in a bulk way - #6877 by @IKarbowiak
+- Add product description_plaintext to populatedb - #6894 by @d-wysocki
+- Add uploading video URLs to product's gallery - #6838 by @GrzegorzDerdak
+- Deallocate stocks for order lines in a bulk way - #6896 by @IKarbowiak
+- Prevent negative available quantity - #6897 by @d-wysocki
+- Fix CheckoutLinesInfoByCheckoutTokenLoader dataloader - #6929 by @IKarbowiak
+- Change the `app` query to return info about the currently authenticated app - #6928 by @d-wysocki
+- Add default sorting by rank for search products - #6936 by @d-wysocki
+- Fix exporting product description to xlsx - #6959 by @IKarbowiak
+- Add `Shop.version` field to query API version - #6980 by @maarcingebala
+- Return empty results when filtering by non-existing attribute - #7025 by @maarcingebala
+- Add new authorization header `Authorization-Bearer` - #6998 by @korycins
+- Add field `paymentMethodType` to `Payment` object - #7073 by @korycins
+
+# 2.11.1
+
+- Add support for Apple Pay on the web - #6466 by @korycins
+
+## 2.11.0
+
+### Features
+
+- Add products export - #5255 by @IKarbowiak
+- Add external apps support - #5767 by @korycins
+- Invoices backend - #5732 by @tomaszszymanski129
+- Adyen drop-in integration - #5914 by @korycins, @IKarbowiak
+- Add a callback view to plugins - #5884 by @korycins
+- Support pushing webhook events to message queues - #5940 by @patrys, @korycins
+- Send a confirmation email when the order is canceled or refunded - #6017
+- No secure cookie in debug mode - #6082 by @patrys, @orzechdev
+- Add searchable and available for purchase flags to product - #6060 by @IKarbowiak
+- Add `TotalPrice` to `OrderLine` - #6068 @fowczarek
+- Add `PRODUCT_UPDATED` webhook event - #6100 by @tomaszszymanski129
+- Search orders by GraphQL payment ID - #6135 by @korycins
+- Search orders by a custom key provided by payment gateway - #6135 by @korycins
+- Add ability to set a default product variant - #6140 by @tomaszszymanski129
+- Allow product variants to be sortable - #6138 by @tomaszszymanski129
+- Allow fetching stocks for staff users only with `MANAGE_ORDERS` permissions - #6139 by @fowczarek
+- Add filtering to `ProductVariants` query and option to fetch variant by SKU in `ProductVariant` query - #6190 by @fowczarek
+- Add filtering by Product IDs to `products` query - #6224 by @GrzegorzDerdak
+- Add `change_currency` command - #6016 by @maarcingebala
+- Add dummy credit card payment - #5822 by @IKarbowiak
+- Add custom implementation of UUID scalar - #5646 by @koradon
+- Add `AppTokenVerify` mutation - #5716 by @korycins
+
+### Breaking Changes
+
+- Refactored JWT support. Requires handling of JWT token in the storefront (a case when the backend returns the exception about the invalid token). - #5734, #5816 by @korycins
+- New logging setup will now output JSON logs in production mode for ease of feeding them into log collection systems like Logstash or CloudWatch Logs - #5699 by @patrys
+- Deprecate `WebhookEventType.CHECKOUT_QUANTITY_CHANGED` - #5837 by @korycins
+- Anonymize and update order and payment fields; drop `PaymentSecureConfirm` mutation, drop Payment type fields: `extraData`, `billingAddress`, `billingEmail`, drop `gatewayResponse` from `Transaction` type - #5926 by @IKarbowiak
+- Switch the HTTP stack from WSGI to ASGI based on Uvicorn - #5960 by @patrys
+- Add `MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES` permission, which is now required to access all attributes and product types related mutations - #6219 by @IKarbowiak
+
+### Fixes
+
+- Fix payment fields in order payload for webhooks - #5862 by @korycins
+- Fix specific product voucher in draft orders - #5727 by @fowczarek
+- Explicit country assignment in default shipping zones - #5736 by @maarcingebala
+- Drop `json_content` field from the `Menu` model - #5761 by @maarcingebala
+- Strip warehouse name in mutations - #5766 by @koradon
+- Add missing order events during checkout flow - #5684 by @koradon
+- Update Google Merchant to get tax rate based by plugin manager - #5823 by @gabmartinez
+- Allow unicode in slug fields - #5877 by @IKarbowiak
+- Fix empty plugin object result after `PluginUpdate` mutation - #5968 by @gabmartinez
+- Allow finishing checkout when price amount is 0 - #6064 by @IKarbowiak
+- Fix incorrect tax calculation for Avatax - #6035 by @korycins
+- Fix incorrect calculation of subtotal with active Avatax - #6035 by @korycins
+- Fix incorrect assignment of tax code for Avatax - #6035 by @korycins
+- Do not allow negative product price - #6091 by @IKarbowiak
+- Handle None as attribute value - #6092 by @IKarbowiak
+- Fix for calling `order_created` before the order was saved - #6095 by @korycins
+- Update default decimal places - #6098 by @IKarbowiak
+- Avoid assigning the same pictures twice to a variant - #6112 by @IKarbowiak
+- Fix crashing system when Avalara is improperly configured - #6117 by @IKarbowiak
+- Fix for failing finalising draft order - #6133 by @korycins
+- Remove corresponding draft order lines when variant is removing - #6119 by @IKarbowiak
+- Update required perms for apps management - #6173 by @IKarbowiak
+- Raise an error for an empty key in metadata - #6176 by @IKarbowiak
+- Add attributes to product error - #6181 by @IKarbowiak
+- Allow to add product variant with 0 price to draft order - #6189 by @IKarbowiak
+- Fix deleting product when default variant is deleted - #6186 by @IKarbowiak
+- Fix get unpublished products, product variants and collection as app - #6194 by @fowczarek
+- Set `OrderFulfillStockInput` fields as required - #6196 by @IKarbowiak
+- Fix attribute filtering by categories and collections - #6214 by @fowczarek
+- Fix `is_visible` when `publication_date` is today - #6225 by @korycins
+- Fix filtering products by multiple attributes - #6215 by @GrzegorzDerdak
+- Add attributes validation while creating/updating a product's variant - #6269 by @GrzegorzDerdak
+- Add metadata to page model - #6292 by @dominik-zeglen
+- Fix for unnecesary attributes validation while updating simple product - #6300 by @GrzegorzDerdak
+- Include order line total price to webhook payload - #6354 by @korycins
+- Fix for fulfilling an order when product quantity equals allocated quantity - #6333 by @GrzegorzDerdak
+- Fix for the ability to filter products on collection - #6363 by @GrzegorzDerdak
+
+## 2.10.2
+
+- Add command to change currencies in the database - #5906 by @d-wysocki
+
+## 2.10.1
+
+- Fix multiplied stock quantity - #5675 by @fowczarek
+- Fix invalid allocation after migration - #5678 by @fowczarek
+- Fix order mutations as app - #5680 by @fowczarek
+- Prevent creating checkout/draft order with unpublished product - #5676 by @d-wysocki
+
+## 2.10.0
+
+- OpenTracing support - #5188 by @tomaszszymanski129
+- Account confirmation email - #5126 by @tomaszszymanski129
+- Relocate `Checkout` and `CheckoutLine` methods into separate module and update checkout related plugins to use them - #4980 by @krzysztofwolski
+- Fix problem with free shipping voucher - #4942 by @IKarbowiak
+- Add sub-categories to random data - #4949 by @IKarbowiak
+- Deprecate `localized` field in Money type - #4952 by @IKarbowiak
+- Fix for shipping API not applying taxes - #4913 by @kswiatek92
+- Query object translation with only `manage_translation` permission - #4914 by @fowczarek
+- Add customer note to draft orders API - #4973 by @IKarbowiak
+- Allow to delete category and leave products - #4970 by @IKarbowiak
+- Remove thumbnail generation from migration - #3494 by @kswiatek92
+- Rename 'shipping_date' field in fulfillment model to 'created' - #2433 by @kswiatek92
+- Reduce number of queries for 'checkoutComplete' mutation - #4989 by @IKarbowiak
+- Force PyTest to ignore the environment variable containing the Django settings module - #4992 by @NyanKiyoshi
+- Extend JWT token payload with user information - #4987 by @salwator
+- Optimize the queries for product list in the dashboard - #4995 by @IKarbowiak
+- Drop dashboard 1.0 - #5000 by @IKarbowiak
+- Fixed serialization error on weight fields when running `loaddata` and `dumpdb` - #5005 by @NyanKiyoshi
+- Fixed JSON encoding error on Google Analytics reporting - #5004 by @NyanKiyoshi
+- Create custom field to translation, use new translation types in translations query - #5007 by @fowczarek
+- Take allocated stock into account in `StockAvailability` filter - #5019 by @simonbru
+- Generate matching postal codes for US addresses - #5033 by @maarcingebala
+- Update debug toolbar - #5032 by @IKarbowiak
+- Allow staff member to receive notification about customers orders - #4993 by @kswiatek92
+- Add user's global id to the JWT payload - #5039 by @salwator
+- Make middleware path resolving lazy - #5041 by @NyanKiyoshi
+- Generate slug on saving the attribute value - #5055 by @fowczarek
+- Fix order status after order update - #5072 by @fowczarek
+- Extend top-level connection resolvers with ability to sort results - #5018 by @fowczarek
+- Drop storefront 1.0 - #5043 by @IKarbowiak
+- Replace permissions strings with enums - #5038 by @kswiatek92
+- Remove gateways forms and templates - #5075 by @IKarbowiak
+- Add `Wishlist` models and GraphQL endpoints - #5021 by @derenio
+- Remove deprecated code - #5107 by @IKarbowiak
+- Fix voucher start date filtering - #5133 by @dominik-zeglen
+- Search by sku in products query - #5117 by @fowczarek
+- Send fulfillment update email - #5118 by @IKarbowiak
+- Add address query - #5148 by @kswiatek92
+- Add `checkout_quantity_changed` webhook - #5042 by @derenio
+- Remove unnecessary `manage_orders` permission - #5142 by @kswiatek92
+- Mutation to change the user email - #5076 by @kswiatek92
+- Add MyPy checks - #5150 by @IKarbowiak
+- Move extracting user or service account to utils - #5152 by @kswiatek92
+- Deprecate order status/created arguments - #5076 by @kswiatek92
+- Fix getting title field in page mutations #5160 by @maarcingebala
+- Copy public and private metadata from the checkout to the order upon creation - #5165 by @dankolbman
+- Add warehouses and stocks- #4986 by @szewczykmira
+- Add permission groups - #5176, #5513 by @IKarbowiak
+- Drop `gettext` occurrences - #5189 by @IKarbowiak
+- Fix `product_created` webhook - #5187 by @dzkb
+- Drop unused resolver `resolve_availability` - #5190 by @maarcingebala
+- Fix permission for `checkoutCustomerAttach` mutation - #5192 by @maarcingebala
+- Restrict access to user field - #5194 by @maarcingebala
+- Unify permission for service account API client in test - #5197 by @fowczarek
+- Add additional confirmation step to `checkoutComplete` mutation - #5179 by @salwator
+- Allow sorting warehouses by name - #5211 by @dominik-zeglen
+- Add anonymization to GraphQL's `webhookSamplePayload` endpoint - #5161 @derenio
+- Add slug to `Warehouse`, `Product` and `ProductType` models - #5196 by @IKarbowiak
+- Add mutation for assigning, unassigning shipping zones to warehouse - #5217 by @kswiatek92
+- Fix passing addresses to `PaymentData` objects - #5223 by @maarcingebala
+- Return `null` when querying `me` as an anonymous user - #5231 by @maarcingebala
+- Added `PLAYGROUND_ENABLED` environment variable/setting to allow to enable the GraphQL playground when `DEBUG` is disabled - #5254 by @NyanKiyoshi
+- Fix access to order query when request from service account - #5258 by @fowczarek
+- Customer shouldn't be able to see draft orders by token - #5259 by @fowczarek
+- Customer shouldn't be able to query checkout with another customer - #5268 by @fowczarek
+- Added integration support of Jaeger Tracing - #5282 by @NyanKiyoshi
+- Return `null` when querying `me` as an anonymous user - #5231 as @maarcingebala
+- Add `fulfillment created` webhook - @szewczykmira
+- Unify metadata API - #5178 by @fowczarek
+- Add compiled versions of emails to the repository - #5260 by @tomaszszymanski129
+- Add required prop to fields where applicable - #5293 by @dominik-zeglen
+- Drop `get_absolute_url` methods - #5299 by @IKarbowiak
+- Add `--force` flag to `cleardb` command - #5302 by @maarcingebala
+- Require non-empty message in `orderAddNote` mutation - #5316 by @maarcingebala
+- Stock management refactor - #5323 by @IKarbowiak
+- Add discount error codes - #5348 by @IKarbowiak
+- Add benchmarks to checkout mutations - #5339 by @fowczarek
+- Add pagination tests - #5363 by @fowczarek
+- Add ability to assign multiple warehouses in mutations to create/update a shipping zone - #5399 by @fowczarek
+- Add filter by ids to the `warehouses` query - #5414 by @fowczarek
+- Add shipping rate price validation - #5411 by @kswiatek92
+- Remove unused settings and environment variables - #5420 by @maarcingebala
+- Add product price validation - #5413 by @kswiatek92
+- Add attribute validation to `attributeAssign` mutation - #5423 by @kswiatek92
+- Add possibility to update/delete more than one item in metadata - #5446 by @koradon
+- Check if image exists before validating - #5425 by @kswiatek92
+- Fix warehouses query not working without id - #5441 by @koradon
+- Add `accountErrors` to `CreateToken` mutation - #5437, #5465 by @koradon
+- Raise `GraphQLError` if filter has invalid IDs - #5460 by @gabmartinez
+- Use `AccountErrorCode.INVALID_CREDENTIALS` instead of `INVALID_PASSWORD` - #5495 by @koradon
+- Add tests for pagination - #5468 by @koradon
+- Add `Job` abstract model and interface - #5510 by @IKarbowiak
+- Refactor implementation of allocation - #5445 by @fowczarek
+- Fix `WeightScalar` - #5530 by @koradon
+- Add `OrderFulfill` mutation - #5525 by @fowczarek
+- Add "It Works" page - #5494 by @IKarbowiak and @dominik-zeglen
+- Extend errors in `OrderFulfill` mutation - #5553 by @fowczarek
+- Refactor `OrderCancel` mutation for multiple warehouses - #5554 by @fowczarek
+- Add negative weight validation - #5564 by @fowczarek
+- Add error when user pass empty object as address - #5585 by @fowczarek
+- Fix payment creation without shipping method - #5444 by @d-wysocki
+- Fix checkout and order flow with variant without inventory tracking - #5599 by @fowczarek
+- Fixed JWT expired token being flagged as unhandled error rather than handled. - #5603 by @NyanKiyoshi
+- Refactor read-only middleware - #5602 by @maarcingebala
+- Fix availability for variants without inventory tracking - #5605 by @fowczarek
+- Drop support for configuring Vatlayer plugin from settings file. - #5614 by @korycins
+- Add ability to query category, collection or product by slug - #5574 by @koradon
+- Add `quantityAvailable` field to `ProductVariant` type - #5628 by @fowczarek
+- Use tags rather than time-based logs for information on requests - #5608 by @NyanKiyoshi
+
+## 2.9.0
+
+### API
+
+- Add mutation to change customer's first name last name - #4489 by @fowczarek
+- Add mutation to delete customer's account - #4494 by @fowczarek
+- Add mutation to change customer's password - #4656 by @fowczarek
+- Add ability to customize email sender address in emails sent by Saleor - #4820 by @NyanKiyoshi
+- Add ability to filter attributes per global ID - #4640 by @NyanKiyoshi
+- Add ability to search product types by value (through the name) - #4647 by @NyanKiyoshi
+- Add queries and mutation for serving and saving the configuration of all plugins - #4576 by @korycins
+- Add `redirectUrl` to staff and user create mutations - #4717 by @fowczarek
+- Add error codes to mutations responses - #4676 by @Kwaidan00
+- Add translations to countries in `shop` query - #4732 by @fowczarek
+- Add support for sorting product by their attribute values through given attribute ID - #4740 by @NyanKiyoshi
+- Add descriptions for queries and query arguments - #4758 by @maarcingebala
+- Add support for Apollo Federation - #4825 by @salwator
+- Add mutation to create multiple product variants at once - #4735 by @fowczarek
+- Add default value to custom errors - #4797 by @fowczarek
+- Extend `availablePaymentGateways` field with gateways' configuration data - #4774 by @salwator
+- Change `AddressValidationRules` API - #4655 by @Kwaidan00
+- Use search in a consistent way; add sort by product type name and publication status to `products` query. - #4715 by @fowczarek
+- Unify `menuItemMove` mutation with other reordering mutations - #4734 by @NyanKiyoshi
+- Don't create an order when the payment was unsuccessful - #4500 by @NyanKiyoshi
+- Don't require shipping information in checkout for digital orders - #4573 by @NyanKiyoshi
+- Drop `manage_users` permission from the `permissions` query - #4854 by @maarcingebala
+- Deprecate `inCategory` and `inCollection` attributes filters in favor of `filter` argument - #4700 by @NyanKiyoshi & @khalibloo
+- Remove `PaymentGatewayEnum` from the schema, as gateways now are dynamic plugins - #4756 by @salwator
+- Require `manage_products` permission to query `costPrice` and `stockQuantity` fields - #4753 by @NyanKiyoshi
+- Refactor account mutations - #4510, #4668 by @fowczarek
+- Fix generating random avatars when updating staff accounts - #4521 by @maarcingebala
+- Fix updating JSON menu representation in mutations - #4524 by @maarcingebala
+- Fix setting variant's `priceOverride` and `costPrice` to `null` - #4754 by @NyanKiyoshi
+- Fix fetching staff user without `manage_users` permission - #4835 by @fowczarek
+- Ensure that a GraphQL query is a string - #4836 by @nix010
+- Add ability to configure the password reset link - #4863 by @fowczarek
+- Fixed a performance issue where Saleor would sometimes run huge, unneeded prefetches when resolving categories or collections - #5291 by @NyanKiyoshi
+- uWSGI now forces the django application to directly load on startup instead of being lazy - #5357 by @NyanKiyoshi
+
+### Core
+
+- Add enterprise-grade attributes management - #4351 by @dominik-zeglen and @NyanKiyoshi
+- Add extensions manager - #4497 by @korycins
+- Add service accounts - backend support - #4689 by @korycins
+- Add support for webhooks - #4731 by @korycins
+- Migrate the attributes mapping from HStore to many-to-many relation - #4663 by @NyanKiyoshi
+- Create general abstraction for object metadata - #4447 by @salwator
+- Add metadata to `Order` and `Fulfillment` models - #4513, #4866 by @szewczykmira
+- Migrate the tax calculations to plugins - #4497 by @korycins
+- Rewrite payment gateways using plugin architecture - #4669 by @salwator
+- Rewrite Stripe integration to use PaymentIntents API - #4606 by @salwator
+- Refactor password recovery system - #4617 by @fowczarek
+- Add functionality to sort products by their "minimal variant price" - #4416 by @derenio
+- Add voucher's "once per customer" feature - #4442 by @fowczarek
+- Add validations for minimum password length in settings - #4735 by @fowczarek
+- Add form to configure payments in the dashboard - #4807 by @szewczykmira
+- Change `unique_together` in `AttributeValue` - #4805 by @fowczarek
+- Change max length of SKU to 255 characters - #4811 by @lex111
+- Distinguish `OrderLine` product name and variant name - #4702 by @fowczarek
+- Fix updating order status after automatic fulfillment of digital products - #4709 by @korycins
+- Fix error when updating or creating a sale with missing required values - #4778 by @NyanKiyoshi
+- Fix error filtering pages by URL in the dashboard 1.0 - #4776 by @NyanKiyoshi
+- Fix display of the products tax rate in the details page of dashboard 1.0 - #4780 by @NyanKiyoshi
+- Fix adding the same product into a collection multiple times - #4518 by @NyanKiyoshi
+- Fix crash when placing an order when a customer happens to have the same address more than once - #4824 by @NyanKiyoshi
+- Fix time zone based tests - #4468 by @fowczarek
+- Fix serializing empty URLs as a string when creating menu items - #4616 by @maarcingebala
+- The invalid IP address in HTTP requests now fallback to the requester's IP address. - #4597 by @NyanKiyoshi
+- Fix product variant update with current attribute values - #4936 by @fowczarek
+- Update checkout last field and add auto now fields to save with update_fields parameter - #5177 by @IKarbowiak
+
+### Dashboard 2.0
+
+- Allow selecting the number of rows displayed in dashboard's list views - #4414 by @benekex2
+- Add ability to toggle visible columns in product list - #4608 by @dominik-zeglen
+- Add voucher settings - #4556 by @benekex2
+- Contrast improvements - #4508 by @benekex2
+- Display menu item form errors - #4551 by @dominik-zeglen
+- Do not allow random IDs to appear in snapshots - #4495 by @dominik-zeglen
+- Input UI changes - #4542 by @benekex2
+- Implement new menu design - #4476 by @benekex2
+- Refetch attribute list after closing modal - #4615 by @dominik-zeglen
+- Add config for Testcafe - #4553 by @dominik-zeglen
+- Fix product type taxes select - #4453 by @benekex2
+- Fix form reloading - #4467 by @dominik-zeglen
+- Fix voucher limit value when checkbox unchecked - #4456 by @benekex2
+- Fix searches and pickers - #4487 by @dominik-zeglen
+- Fix dashboard menu styles - #4491 by @benekex2
+- Fix menu responsiveness - #4511 by @benekex2
+- Fix loosing focus while typing in the product description field - #4549 by @dominik-zeglen
+- Fix MUI warnings - #4588 by @dominik-zeglen
+- Fix bulk action checkboxes - #4618 by @dominik-zeglen
+- Fix rendering user avatar when it's empty #4546 by @maarcingebala
+- Remove Dashboard 2.0 files form Saleor repository - #4631 by @dominik-zeglen
+- Fix CreateToken mutation to use NonNull on errors field #5415 by @gabmartinez
+
+### Other notable changes
+
+- Replace Pipenv with Poetry - #3894 by @michaljelonek
+- Upgrade `django-prices` to v2.1 - #4639 by @NyanKiyoshi
+- Disable reports from uWSGI about broken pipe and write errors from disconnected clients - #4596 by @NyanKiyoshi
+- Fix the random failures of `populatedb` trying to create users with an existing email - #4769 by @NyanKiyoshi
+- Enforce `pydocstyle` for Python docstrings over the project - #4562 by @NyanKiyoshi
+- Move Django Debug Toolbar to dev requirements - #4454 by @derenio
+- Change license for artwork to CC-BY 4.0
+- New translations:
+  - Greek
+
+## 2.8.0
+
+### Core
+
 - Avatax backend support - #4310 by @korycins
-- Use "esModuleInterop" flag in tsconfig to simplify imports - #4372 by @dominik-zeglen
-- Use hooks instead of class component in forms - #4374 by @dominik-zeglen
-- Drop csrf token header from API client - #4357 by @dominik-zeglen
-- Improve vouchers ui - #4362 by @benekex2
-- Fix for random failing tests in test_discount - #4401 by @korycins
-- Fix internal error when users enters an invalid phone number in an address - #4404 by @NyanKiyoshi
+- Add ability to store used payment sources in gateways (first implemented in Braintree) - #4195 by @salwator
+- Add ability to specify a minimal quantity of checkout items for a voucher - #4427 by @fowczarek
+- Change the type of start and end date fields from Date to DateTime - #4293 by @fowczarek
+- Revert the custom dynamic middlewares - #4452 by @NyanKiyoshi
+
+### Dashboard 2.0
+
+- UX improvements in Vouchers section - #4362 by @benekex2
+- Add company address configuration - #4432 by @benekex2
+- Require name when saving a custom list filter - #4269 by @benekex2
+- Use `esModuleInterop` flag in `tsconfig.json` to simplify imports - #4372 by @dominik-zeglen
+- Use hooks instead of a class component in forms - #4374 by @dominik-zeglen
+- Drop CSRF token header from API client - #4357 by @dominik-zeglen
+- Fix various bugs in the product section - #4429 by @dominik-zeglen
+
+### Other notable changes
+
+- Fix error when creating a checkout with voucher code - #4292 by @NyanKiyoshi
+- Fix error when users enter an invalid phone number in an address - #4404 by @NyanKiyoshi
+- Fix error when adding a note to an anonymous order - #4319 by @NyanKiyoshi
+- Fix gift card duplication error in the `populatedb` script - #4336 by @fowczarek
+- Fix vouchers apply once per order - #4339 by @fowczarek
+- Fix discount tests failing at random - #4401 by @korycins
+- Add `SPECIFIC_PRODUCT` type to `VoucherType` - #4344 by @fowczarek
+- New translations:
+  - Icelandic
+- Refactored the backend side of `checkoutCreate` to improve performances and prevent side effects over the user's checkout if the checkout creation was to fail. - #4367 by @NyanKiyoshi
+- Refactored the logic of cleaning the checkout shipping method over the API, so users do not lose the shipping method when updating their checkout. If the shipping method becomes invalid, it will be replaced by the cheapest available. - #4367 by @NyanKiyoshi & @szewczykmira
+- Refactored process of getting available shipping methods to make it easier to understand and prevent human-made errors. - #4367 by @NyanKiyoshi
+- Moved 3D secure option to Braintree plugin configuration and update config structure mechanism - #4751 by @salwator
 
 ## 2.7.0
 

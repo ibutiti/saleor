@@ -3,10 +3,10 @@
 from __future__ import unicode_literals
 
 import datetime
-from django.conf import settings
-from django.db import migrations, models
+import os
+
 import django.db.models.deletion
-import django_prices.models
+from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
@@ -61,7 +61,7 @@ class Migration(migrations.Migration):
                     "discount_value_type",
                     models.CharField(
                         choices=[
-                            ("fixed", settings.DEFAULT_CURRENCY),
+                            ("fixed", os.environ.get("DEFAULT_CURRENCY", "USD")),
                             ("percentage", "%"),
                         ],
                         default="fixed",
@@ -75,12 +75,8 @@ class Migration(migrations.Migration):
                 ("apply_to", models.CharField(blank=True, max_length=20, null=True)),
                 (
                     "limit",
-                    django_prices.models.MoneyField(
-                        blank=True,
-                        currency=settings.DEFAULT_CURRENCY,
-                        decimal_places=2,
-                        max_digits=12,
-                        null=True,
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=12, null=True
                     ),
                 ),
                 (
